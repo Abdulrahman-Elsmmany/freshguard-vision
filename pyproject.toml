@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "food-freshness-detector"
+version = "0.1.0"
+description = "Local Streamlit app and ML pipeline for fruit and vegetable freshness detection."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [
+  { name = "Mahmoud" }
+]
+dependencies = [
+  "numpy>=1.26.4,<2.0.0",
+  "opencv-python>=4.11.0,<5.0.0",
+  "pillow>=11.3.0,<12.0.0",
+  "streamlit>=1.55.0,<2.0.0",
+  "timm>=1.0.0,<2.0.0",
+  "torch>=2.6.0,<3.0.0",
+  "torchvision>=0.21.0,<1.0.0",
+  "ultralytics>=8.3.0,<9.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/freshness"]
+
+[tool.uv]
+package = true

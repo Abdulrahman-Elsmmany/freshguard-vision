@@ -1,0 +1,33 @@
+.venv/
+__pycache__/
+.mypy_cache/
+.coverage
+coverage.xml
+dist/
+build/
+artifacts/
+artifacts/crops/
+data/raw/
+data/processed/
+data/detection/
+*.pt
+*.onnx
+*.engine
+*.ckpt
+*.log
+Thumbs.db
+Desktop.ini
+data/
+
+results.zip
+results/
+results_efficientnetv2.zip
+results_efficientnetv2/
+
+# Claude Code session state — local-only, never commit
+.claude/
+
+# Local-only eval artifacts (notebook 5 outputs are checked in to the
+# repo root, but the loose .pt copies + working dirs stay local)
+yolo26s_food_freshness.pt
+efficientnetv2s_food_freshness.pt

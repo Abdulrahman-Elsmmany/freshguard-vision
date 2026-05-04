@@ -1,0 +1,11 @@
+[runtime]
+default_mode = "torch"
+detector_confidence = 0.25
+detector_iou = 0.45
+max_detections = 8
+classifier_image_size = 224
+fallback_threshold = 0.4
+
+[artifacts]
+detector = "artifacts/yolo26s_food_freshness.pt"
+classifier = "artifacts/efficientnetv2s_food_freshness.pt"
