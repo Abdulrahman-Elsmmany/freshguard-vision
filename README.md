@@ -1,14 +1,31 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/thumbnail-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/thumbnail-light.png">
+  <img alt="FreshGuard Vision — 24-class produce freshness detection" src="./assets/thumbnail-dark.png" width="100%">
+</picture>
+
 # FreshGuard Vision
 
-Single-stage **24-class produce freshness detection** with an EfficientNetV2-S
-fallback. Local Streamlit demo, honest cluster-disjoint metrics, reproducible
-training pipeline on Kaggle.
+> Single-stage **24-class produce freshness detection** with an EfficientNetV2-S fallback. Local Streamlit demo, honest cluster-disjoint metrics, reproducible training pipeline on Kaggle.
 
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[Live demo](#quickstart) · [Eval report](./eval_report.md) · [Training notebooks](./notebooks/) · [PRD](./PRD.md)
+
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3120/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Streamlit 1.56](https://img.shields.io/badge/streamlit-1.56-FF4B4B.svg)](https://streamlit.io)
-[![PyTorch](https://img.shields.io/badge/pytorch-2.8-EE4C2C.svg)](https://pytorch.org)
-[![Ultralytics YOLO26](https://img.shields.io/badge/ultralytics-YOLO26s-111111.svg)](https://docs.ultralytics.com/models/yolo26/)
+[![Streamlit 1.56](https://img.shields.io/badge/streamlit-1.56-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![PyTorch 2.8](https://img.shields.io/badge/pytorch-2.8-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
+[![Ultralytics YOLO26s](https://img.shields.io/badge/ultralytics-YOLO26s-111111.svg)](https://docs.ultralytics.com/models/yolo26/)
+[![Macro F1](https://img.shields.io/badge/macro_F1-0.81-06b6d4.svg)](./eval_report.md)
+
+---
+
+## Demo
+
+> _Record a 10–20 second screen capture of the Streamlit app classifying a fresh vs rotten image, save as `eval/demo.gif`, and reference it here. [LICEcap](https://www.cockos.com/licecap/) (Windows) or [Kap](https://getkap.co/) (macOS) work well._
+
+```
+![FreshGuard demo](./eval/demo.gif)
+```
 
 ---
 
@@ -27,38 +44,40 @@ training pipeline on Kaggle.
 | Detector precision / recall (conf 0.25) | 0.864 / 0.729 |
 | Abstention rate (end-to-end)            |   4.09 %   |
 
-Macro F1 is the headline because top-1 accuracy hides minority-class
-failure under the **41 : 1** class imbalance baked into the source dataset.
-Numbers come from `eval_report.json`, produced by
-[`notebooks/kaggle_05_evaluate_end_to_end.ipynb`](notebooks/kaggle_05_evaluate_end_to_end.ipynb).
+Macro F1 is the headline because top-1 accuracy hides minority-class failure under the **41 : 1** class imbalance baked into the source dataset. Numbers come from `eval_report.json`, produced by [`notebooks/kaggle_05_evaluate_end_to_end.ipynb`](notebooks/kaggle_05_evaluate_end_to_end.ipynb).
+
+<details>
+<summary><strong>Classifier confusion matrix</strong> (click to expand)</summary>
+
+<br>
+
+![24-class confusion matrix](./eval/classifier_confusion_matrix.png)
+
+Most off-diagonal mass clusters at the **fresh ↔ rotten** boundary within a single produce type rather than crossing produce types — the failure mode you'd want.
+
+</details>
 
 ---
 
 ## Architecture
 
-```
-   ┌──────────────────┐     ┌──────────────────────┐
-   │  uploaded image  │────▶│  YOLO26s · 24-class  │── one or more
-   └──────────────────┘     │   single forward     │   detections (label,
-                            │   pass               │   freshness, box, conf)
-                            └──────────┬───────────┘
-                                       │ no boxes
-                                       ▼
-                            ┌──────────────────────┐
-                            │  EfficientNetV2-S    │── full-image prediction
-                            │  · 24-class          │   (no localization)
-                            │  fallback classifier │
-                            └──────────┬───────────┘
-                                       │ confidence < 0.40
-                                       ▼
-                              "unknown / n_a"
+```mermaid
+flowchart LR
+    UP["📷 Uploaded image"]
+    YOLO["YOLO26s · 24-class<br/>single forward pass"]
+    EFF["EfficientNetV2-S<br/>24-class fallback classifier"]
+    DET["✅ Detections<br/>(label · freshness · box · conf)"]
+    CLS["✅ Single guess<br/>(label · freshness · conf)"]
+    UNK["🔶 unknown / n_a"]
+
+    UP --> YOLO
+    YOLO -->|"≥ 1 box"| DET
+    YOLO -->|"no boxes"| EFF
+    EFF -->|"top-1 conf ≥ 0.40"| CLS
+    EFF -->|"top-1 conf < 0.40"| UNK
 ```
 
-The 24-class label space is `{12 produce types} × {fresh, rotten}` — so
-the detector and the fallback classifier emit interchangeable labels.
-Apples and oranges are not compared with bananas: the joint label
-prevents the cascade-error class of bug where the type model and the
-freshness model disagree about what they're looking at.
+The 24-class label space is `{12 produce types} × {fresh, rotten}` — the detector and the fallback classifier emit interchangeable labels. Apples and oranges are not compared with bananas: the joint label prevents the cascade-error class of bug where the type model and the freshness model disagree about what they're looking at.
 
 ---
 
@@ -72,9 +91,7 @@ python scripts/download_artifacts.py     # pulls .pt files from the GitHub Relea
 uv run streamlit run app.py
 ```
 
-Requires Python 3.12, [`uv`](https://docs.astral.sh/uv/), and ~140 MB of
-model weights downloaded from the v0.2.0 release. Inference is local
-PyTorch only — no cloud APIs, no ONNX, no remote services.
+Requires Python 3.12, [`uv`](https://docs.astral.sh/uv/), and ~140 MB of model weights downloaded from the [v0.2.0 release](https://github.com/Abdulrahman-Elsmmany/freshguard-vision/releases/tag/v0.2.0). Inference is local PyTorch only — no cloud APIs, no ONNX, no remote services.
 
 ---
 
@@ -100,21 +117,13 @@ Weakest:
 | `banana_fresh`  | 0.710 |     319 |
 | `orange_rotten` | 0.722 |     665 |
 
-The `okra_*` weakness reflects the source data — Okra is one of the
-smallest classes (~973 raw images total) and the rotten subset is
-particularly noisy. Most other off-diagonal mass clusters at the
-**fresh ↔ rotten** boundary within a single produce type rather than
-crossing produce types — the failure mode you'd want. See
-[`eval/classifier_confusion_matrix.png`](eval/classifier_confusion_matrix.png)
-for the full picture.
+The `okra_*` weakness reflects the source data — Okra is one of the smallest classes (~973 raw images total) and the rotten subset is particularly noisy. Most other off-diagonal mass clusters at the **fresh ↔ rotten** boundary within a single produce type rather than crossing produce types — the failure mode you'd want. Full breakdown: [`eval_report.md`](./eval_report.md).
 
 ---
 
 ## Training pipeline
 
-Every step runs on Kaggle. The five notebooks under `notebooks/` chain
-their outputs through Kaggle Datasets — each notebook publishes a
-dataset that the next one attaches as input.
+Every step runs on Kaggle. The five notebooks under `notebooks/` chain their outputs through Kaggle Datasets — each notebook publishes a dataset that the next one attaches as input.
 
 | # | Notebook                                              | What it does |
 |---|-------------------------------------------------------|--------------|
@@ -152,48 +161,35 @@ freshguard-vision/
 
 ## What's in the repo, what's in the release
 
-The `.pt` checkpoints are large (~140 MB combined) and don't belong in
-git. They live on the
-[v0.2.0 GitHub Release](https://github.com/Abdulrahman-Elsmmany/freshguard-vision/releases/tag/v0.2.0):
+The `.pt` checkpoints are large (~140 MB combined) and don't belong in git. They live on the [v0.2.0 GitHub Release](https://github.com/Abdulrahman-Elsmmany/freshguard-vision/releases/tag/v0.2.0):
 
 - `yolo26s_food_freshness.pt` — detector, 60 MB
 - `efficientnetv2s_food_freshness.pt` — classifier, 80 MB
 
-`scripts/download_artifacts.py` resolves the latest release via the
-GitHub API and drops both files into `artifacts/` automatically.
+`scripts/download_artifacts.py` resolves the latest release via the GitHub API and drops both files into `artifacts/` automatically.
 
 ---
 
 ## Honest limitations
 
-- **`okra_*` is the weakest class** (F1 0.33 / 0.60). Source data is
-  small and noisy; documented rather than papered over.
-- **`bitter_gourd_*` has only 684 raw examples** and trains on
-  ~250 each per split. Per-class metrics there should be read with
-  that floor in mind, even though F1 ends up high (0.97 fresh, 0.93
-  rotten).
-- **Detection ground truth is Grounding-DINO pseudo-labels** with
-  programmatic area filters, not manual annotation. Per-class noise
-  was sampled visually during the QA pass, but absolute box-quality
-  numbers should be treated as conservative.
-- **Out-of-distribution images** (cluttered scenes, novel varieties,
-  non-produce subjects) trigger the classifier fallback or the
-  `unknown` abstain — the system would rather refuse than confidently
-  hallucinate.
-- **Binary freshness only.** No shelf-life forecast, no "medium" /
-  partial-ripeness label.
+- **`okra_*` is the weakest class** (F1 0.33 / 0.60). Source data is small and noisy; documented rather than papered over.
+- **`bitter_gourd_*` has only 684 raw examples** and trains on ~250 each per split. Per-class metrics there should be read with that floor in mind, even though F1 ends up high (0.97 fresh, 0.93 rotten).
+- **Detection ground truth is Grounding-DINO pseudo-labels** with programmatic area filters, not manual annotation. Per-class noise was sampled visually during the QA pass, but absolute box-quality numbers should be treated as conservative.
+- **Out-of-distribution images** (cluttered scenes, novel varieties, non-produce subjects) trigger the classifier fallback or the `unknown` abstain — the system would rather refuse than confidently hallucinate.
+- **Binary freshness only.** No shelf-life forecast, no "medium" / partial-ripeness label.
 
 ---
 
 ## Stack
 
-Python 3.12 · [uv](https://docs.astral.sh/uv/) · PyTorch 2.8 ·
-[Ultralytics 8.3 / YOLO26s](https://docs.ultralytics.com/models/yolo26/) ·
-[timm](https://huggingface.co/docs/timm) ·
-[Streamlit 1.56](https://streamlit.io) ·
-[Grounding DINO](https://huggingface.co/IDEA-Research/grounding-dino-tiny)
-(training only).
+`Python 3.12` · [`uv`](https://docs.astral.sh/uv/) · `PyTorch 2.8` · [`Ultralytics 8.3 / YOLO26s`](https://docs.ultralytics.com/models/yolo26/) · [`timm`](https://huggingface.co/docs/timm) · [`Streamlit 1.56`](https://streamlit.io) · [`Grounding DINO`](https://huggingface.co/IDEA-Research/grounding-dino-tiny) (training only)
 
-## License
+## Status
 
-[MIT](LICENSE) — © 2026 Abdulrahman Elsmmany.
+Local Streamlit demo · last release [`v0.2.0`](https://github.com/Abdulrahman-Elsmmany/freshguard-vision/releases/tag/v0.2.0) · single-author project · MIT licensed.
+
+## Contact
+
+[Abdulrahman Elsmmany](https://github.com/Abdulrahman-Elsmmany) · [eng.elsmmany@gmail.com](mailto:eng.elsmmany@gmail.com) · [linkedin](https://www.linkedin.com/in/abdulrahman-elsmmany/)
+
+[MIT License](LICENSE) · © 2026
