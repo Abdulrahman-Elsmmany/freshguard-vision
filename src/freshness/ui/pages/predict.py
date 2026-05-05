@@ -23,7 +23,40 @@ from freshness.utils.labels import display_freshness_name, display_type_name
 SOURCE_LABEL = {
     "detector": "DETECTOR · YOLO26s",
     "classifier": "FALLBACK · EfficientNetV2-S",
+    "ensemble": "ENSEMBLE · CLASSIFIER OVERRIDE",
     "unknown": "ABSTAIN",
+}
+
+# Maps the abstain_reason emitted by classifier.py / pipeline.py into
+# user-facing copy. Anything not in this table falls back to the generic
+# "neither side committed" line.
+ABSTAIN_REASON_COPY: dict[str, tuple[str, str]] = {
+    "low_top1": (
+        "LOW CONFIDENCE",
+        "The fallback classifier's top guess sat below the confidence floor — "
+        "likely an unfamiliar fruit, a tight crop, or noise.",
+    ),
+    "high_entropy": (
+        "AMBIGUOUS — HIGH ENTROPY",
+        "The softmax was spread thin across many classes, the signature of an "
+        "out-of-distribution input (watermarks, cross-sections, scenes the "
+        "model never saw in training).",
+    ),
+    "narrow_margin": (
+        "TOO CLOSE TO CALL",
+        "The top two classes were within a few percent of each other. The "
+        "system declined to commit when both options were plausible.",
+    ),
+    "detector_classifier_disagree": (
+        "DETECTOR ↔ CLASSIFIER DISAGREEMENT",
+        "The detector and fallback classifier voted for different produce "
+        "types with similar confidence. Honest abstain rather than picking "
+        "the louder one.",
+    ),
+    "no_classifier": (
+        "NO FALLBACK AVAILABLE",
+        "The detector found nothing and no fallback classifier is loaded.",
+    ),
 }
 
 STATE_INK = {
@@ -48,7 +81,13 @@ def _ink_for(detection: DetectedProduce) -> str:
 def _render_specimen_card(detection: DetectedProduce, index: int) -> None:
     """Render one detection as a botanical specimen label."""
     state_cls = _state_class(detection.freshness, detection.source)
-    source_cls = detection.source if detection.source in {"detector", "classifier", "unknown"} else "unknown"
+    # Reuse the existing CSS classes; "ensemble" piggybacks on the
+    # classifier styling since it represents the same model voting.
+    source_cls = (
+        detection.source
+        if detection.source in {"detector", "classifier", "unknown"}
+        else "classifier"
+    )
     latin = PRODUCE_LATIN.get(detection.produce_type, "Specimen incognitus")
     display_type = display_type_name(detection.produce_type)
     display_state = display_freshness_name(detection.freshness)
@@ -183,7 +222,7 @@ def render_page() -> None:
         caption = (
             f"NO CONFIDENT PREDICTION"
             if is_unknown
-            else f"{n} OBSERVATION{plural}  ·  CONF ≥ 0.25"
+            else f"{n} OBSERVATION{plural}  ·  CONF ≥ 0.45"
         )
         st.image(overlay, caption=caption, width="stretch")
 
@@ -191,13 +230,21 @@ def render_page() -> None:
         render_section("III.", "FIELD NOTES", "Per-detection record")
 
         if not detections or detections[0].source == "unknown":
+            reason = detections[0].abstain_reason if detections else None
+            heading, body = ABSTAIN_REASON_COPY.get(
+                reason or "",
+                (
+                    "SPECIMEN NOT RECOGNIZED",
+                    "Neither the detector nor the fallback classifier was "
+                    "confident enough to commit. The system abstained "
+                    "rather than guess.",
+                ),
+            )
             st.markdown(
-                """
+                f"""
                 <div class="fg-abstain">
-                  <strong>SPECIMEN NOT RECOGNIZED</strong>
-                  Neither the detector nor the fallback classifier was
-                  confident enough to commit. The system abstained
-                  rather than guess.
+                  <strong>{heading}</strong>
+                  {body}
                 </div>
                 """,
                 unsafe_allow_html=True,

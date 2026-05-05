@@ -1,6 +1,6 @@
 [runtime]
 default_mode = "torch"
-detector_confidence = 0.25
+detector_confidence = 0.30
 detector_iou = 0.45
 max_detections = 8
 classifier_image_size = 224
