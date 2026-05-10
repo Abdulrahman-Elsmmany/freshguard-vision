@@ -36,10 +36,9 @@ def _scoreboard_html() -> str:
     return (
         '<div class="fg-scoreboard">'
         + tile("MACRO F1", f"{m['macro_f1']:.4f}", "classifier · 24-class")
-        + tile("JOINT ACC", f"{m['joint_accuracy']:.4f}", "end-to-end · excl. abstain")
-        + tile("DETECT mAP@50", f"{m['detector_map50']:.4f}",
-               f"@ conf {m['detector_conf']:.2f}")
-        + tile("ABSTAIN", f"{m['abstention_rate'] * 100:.2f} %", "end-to-end")
+        + tile("TOP-1", f"{m['top1_accuracy']:.4f}", "classifier · 24-class")
+        + tile("KTH TYPE", f"{m['kth_type_accuracy']:.4f}", f"external · n={m['kth_count']:.0f}")
+        + tile("DETECT mAP@50", f"{m['detector_map50']:.4f}", f"@ conf {m['detector_conf']:.2f}")
         + "</div>"
     )
 
@@ -67,20 +66,14 @@ def _detector_table() -> str:
         f"<td class='num'>{m['macro_f1']:.4f}</td></tr>"
         f"<tr><td>Classifier top-1 accuracy</td>"
         f"<td class='num'>{m['top1_accuracy']:.4f}</td></tr>"
-        f"<tr><td>End-to-end joint accuracy <em>(excl. abstain)</em></td>"
-        f"<td class='num'>{m['joint_accuracy']:.4f}</td></tr>"
-        f"<tr><td>End-to-end macro F1 <em>(excl. abstain)</em></td>"
-        f"<td class='num'>{m['joint_macro_f1']:.4f}</td></tr>"
-        f"<tr><td>Detector precision @ conf {m['detector_conf']:.2f}</td>"
-        f"<td class='num'>{m['detector_p']:.4f}</td></tr>"
-        f"<tr><td>Detector recall @ conf {m['detector_conf']:.2f}</td>"
-        f"<td class='num'>{m['detector_r']:.4f}</td></tr>"
+        f"<tr><td>KTH GroceryStoreDataset type accuracy <em>(external)</em></td>"
+        f"<td class='num'>{m['kth_type_accuracy']:.4f}</td></tr>"
+        f"<tr><td>KTH external sample count</td>"
+        f"<td class='num'>{m['kth_count']:.0f}</td></tr>"
         f"<tr><td>Detector mAP@50</td>"
         f"<td class='num'>{m['detector_map50']:.4f}</td></tr>"
         f"<tr><td>Detector mAP@50–95</td>"
         f"<td class='num'>{m['detector_map5095']:.4f}</td></tr>"
-        f"<tr><td>Abstention rate</td>"
-        f"<td class='num'>{m['abstention_rate'] * 100:.2f} %</td></tr>"
         "</tbody></table>"
     )
 
@@ -100,7 +93,7 @@ def _specimens_grid() -> str:
 
 def render_page() -> None:
     render_hero(
-        eyebrow="FIELD GUIDE · v0.2.0 · CLUSTER-DISJOINT TEST SPLIT",
+        eyebrow="FIELD GUIDE · v2 · CLUSTER-DISJOINT TEST SPLIT",
         title="A field guide to the <em>numbers</em>.",
         latin_cycle=[PRODUCE_LATIN[p] for p in PRODUCE_TYPES],
         kicker=(

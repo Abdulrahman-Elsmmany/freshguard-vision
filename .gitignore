@@ -19,10 +19,19 @@ Thumbs.db
 Desktop.ini
 data/
 
+# Agent/session instructions are local-only.
+AGENTS.md
+CLAUDE.md
+cloud.md
+CLOUD.md
+
 results.zip
 results/
 results_efficientnetv2.zip
 results_efficientnetv2/
+deprecated/**
+!deprecated/
+!deprecated/README.md
 
 # Claude Code session state — local-only, never commit
 .claude/

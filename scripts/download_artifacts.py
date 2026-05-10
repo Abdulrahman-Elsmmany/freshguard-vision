@@ -6,11 +6,11 @@ release URL pattern.
 
 Usage:
     python scripts/download_artifacts.py
-    python scripts/download_artifacts.py --tag v0.2.0
+    python scripts/download_artifacts.py --tag v0.3.0
     python scripts/download_artifacts.py --repo owner/freshguard-vision
 
-The detector and classifier asset names match the names produced by
-notebooks/kaggle_03_* and kaggle_04_*.
+The detector and classifier asset names match the v2 names produced by
+notebooks/kaggle_03_*_v2 and kaggle_04_*_v2.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from pathlib import Path
 DEFAULT_REPO = "Abdulrahman-Elsmmany/freshguard-vision"
 DEFAULT_TAG = "latest"
 ASSETS = (
-    "yolo26s_food_freshness.pt",
-    "efficientnetv2s_food_freshness.pt",
+    "yolo26n_produce_v2.pt",
+    "dinov3_vits16_food_freshness_v2.pt",
 )
 ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts"
 
@@ -99,7 +99,9 @@ def main() -> int:
     if failures:
         print(f"\nMissing: {', '.join(failures)}")
         print("Train the models on Kaggle (see notebooks/) and attach the .pt files")
-        print(f"to a GitHub Release on {args.repo}.")
+        print(f"to a GitHub Release on {args.repo}. Expected asset names:")
+        for asset in ASSETS:
+            print(f"  - {asset}")
         return 1
     print("\nAll artifacts present.")
     return 0

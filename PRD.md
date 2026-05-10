@@ -10,15 +10,17 @@ item.
 
 Build a reproducible local demo that classifies 24 fine-grained labels
 (12 produce types × {fresh, rotten}) honestly, with leakage-controlled
-metrics and a single-stage architecture that doesn't compound errors.
+metrics and a two-stage v2 architecture that separates localization from
+classification.
 
 ## Runtime Artifacts
 
-The app uses local PyTorch artifacts only:
+The v2 app uses local PyTorch artifacts only:
 
-- Detector: `artifacts/yolo26s_food_freshness.pt` (YOLO26s, 24 classes)
-- Fallback classifier: `artifacts/efficientnetv2s_food_freshness.pt`
-  (EfficientNetV2-S, 24 classes)
+- Detector: `artifacts/yolo26n_produce_v2.pt` (YOLO26n, 1 class:
+  `produce`)
+- Classifier: `artifacts/dinov3_vits16_food_freshness_v2.pt`
+  (DINOv3-S/16 + MLP head, 24 classes)
 
 No ONNX path, no cloud inference. Runtime config lives in
 `configs/inference.toml`.
@@ -37,8 +39,9 @@ above. `Bellpepper` and `Capciscum` source folders are merged into one
 
 Two freshness levels: `fresh`, `rotten`.
 
-The detector and classifier both predict the joint 24-class label
-(`<produce>_<freshness>`), so their outputs are interchangeable.
+The classifier predicts the joint 24-class label
+(`<produce>_<freshness>`). The detector predicts only produce boxes and
+has no type or freshness authority.
 
 Runtime abstention labels surface in the UI when both stages refuse:
 `unknown / n_a`.
@@ -46,13 +49,17 @@ Runtime abstention labels surface in the UI when both stages refuse:
 ## User Flow
 
 1. User uploads an image.
-2. **Detector first.** YOLO26s runs at conf 0.25 and returns 0..N boxes,
-   each with a 24-class label and confidence.
-3. **Fallback if detector finds nothing.** EfficientNetV2-S runs on the
-   full image. If its top-1 confidence ≥ 0.4, the app surfaces that
-   single guess (no box).
-4. **Abstain otherwise.** Both stages refusing yields `unknown / n_a`.
-5. UI renders **all** detections (not just the top one), labeled with
+2. **Detector first.** YOLO26n runs at conf 0.40 and returns 0..N
+   produce boxes with confidence.
+3. **Classifier authority.** DINOv3-S/16 runs on each crop and assigns
+   the 24-class type/freshness label.
+4. **Full-image sanity check.** DINOv3-S/16 also runs on the full image.
+   If full-image and crop predictions both commit but disagree on produce
+   type, the app abstains on that box.
+5. **Fallback if detector finds nothing.** The full-image classifier can
+   surface a single no-box guess if it clears the abstain stack.
+6. **Abstain otherwise.** Refusal yields `unknown / n_a`.
+7. UI renders **all** detections (not just the top one), labeled with
    produce, freshness, confidence, and source badge (`detector` /
    `classifier` / `unknown`).
 
@@ -67,6 +74,11 @@ Runtime abstention labels surface in the UI when both stages refuse:
 - App size guard rejects images whose longest side exceeds 4096 px.
 
 ## Dataset And Training Notes
+
+The v2 rebuild is implemented through six `_v2` Kaggle notebooks:
+official-source download, dataset audit/split, detector-data
+preparation, YOLO26n detector training, DINOv3 classifier training, and
+final evaluation. The v1 notebooks remain as shipped v0.2.0 evidence.
 
 Source: Kaggle `ulnnproject/food-freshness-dataset`, a merge of three
 upstream Kaggle multiclass datasets. Raw size: 71,322 images across 26
@@ -83,31 +95,30 @@ fresh/rotten.
   Hamming distance ≤ 5, Union-Find clustering). Train/val/test splits
   are cluster-disjoint at a 70/15/15 ratio, stratified by
   `produce_type × freshness`. No near-duplicate ever spans two splits.
-- Detector training data: ~13,871 images stratified across the 24
-  classes, with bounding boxes pseudo-labeled by Grounding DINO
-  (`IDEA-Research/grounding-dino-tiny`) using the known produce type as
-  the prompt. Per-class minimum 300 boxes for minority classes
-  (Bittergroud, Okra, Mango, Strawberry).
-- Classifier training data: the full deduplicated split (~50k train).
+- v2 detector training data merges Food Freshness full-image bootstrap
+  boxes, KTH GroceryStoreDataset full-image boxes, and official Open
+  Images V7 produce bounding boxes into a 1-class `produce` YOLO dataset.
+- v2 classifier training data keeps Food Freshness as the canonical
+  24-class freshness benchmark. KTH GroceryStoreDataset is included only
+  as low-weight `fresh_assumed` auxiliary training data and type-only
+  external evaluation; it is not mixed into headline freshness metrics.
 
 ## Headline Metrics
 
-Computed on the cluster-disjoint test split. Full breakdown in
-`eval_report.md`.
+Current values are from the v2 evaluation notebook. Full breakdown in
+`eval_report.md`; machine-readable values are in `eval_report.json`.
 
 | Block | Metric | Value |
 |---|---|---:|
-| Classifier (ground-truth full image, 24 classes) | Macro F1 | **0.81** |
-| Classifier (ground-truth full image, 24 classes) | Top-1 accuracy | 0.84 |
-| Detector @ conf 0.25 | Precision / Recall | 0.86 / 0.73 |
-| Detector @ conf 0.25 | mAP50 / mAP50-95 | 0.75 / 0.74 |
-| End-to-end pipeline | Joint accuracy (excl. abstain) | **0.83** |
-| End-to-end pipeline | Macro F1 (excl. abstain) | 0.78 |
-| End-to-end pipeline | Abstention rate | 4.1% |
+| Classifier (Food Freshness, 24 classes) | Macro F1 | **0.9478** |
+| Classifier (Food Freshness, 24 classes) | Top-1 accuracy | 0.9490 |
+| KTH GroceryStoreDataset external test | Type accuracy | 0.8995 |
+| KTH GroceryStoreDataset external test | Count | 955 |
+| Detector (1-class produce) | mAP50 / mAP50-95 | 0.8763 / 0.8249 |
 
 **Macro F1 is the headline.** Top-1 hides minority-class failure under
-41:1 imbalance. Detector recall of 0.73 is a substantial lift over the
-previous 0.438.
+41:1 imbalance. KTH is reported as a type-only external benchmark
+because it has no fresh/rotten labels.
 
 ## Non-Goals
 
@@ -122,25 +133,25 @@ previous 0.438.
 - App boots locally with `uv run streamlit run app.py`.
 - `python scripts/download_artifacts.py` pulls both checkpoints from a
   GitHub Release on a fresh clone.
-- Detector loads from `artifacts/yolo26s_food_freshness.pt` and
-  classifier loads from `artifacts/efficientnetv2s_food_freshness.pt`.
+- Detector loads from `artifacts/yolo26n_produce_v2.pt` and classifier
+  loads from `artifacts/dinov3_vits16_food_freshness_v2.pt`.
 - Known fresh and known rotten test images render readable boxes plus a
   per-detection card.
 - Photos with no produce return `unknown / n_a`.
 
 ## Known Limitations
 
-- Detection ground truth is Grounding-DINO pseudo-labels with
-  programmatic area filters, not full manual annotation. Per-class
-  noise was sampled visually in notebook 2's QA report.
-- `okra_rotten` (33) and `okra_fresh` (60) classifier F1 are weak
-  because raw counts are small (~973 total) and the rotten subset is
-  particularly noisy. Treat these predictions skeptically.
-- Bittergroud has only 684 raw examples — the model is trained on it
-  but per-class metrics should be read with that floor in mind.
+- Detector supervision is mixed: Food Freshness and KTH contribute
+  full-image bootstrap boxes, while Open Images contributes official
+  object boxes. It is not a fully manual box-annotation benchmark.
+- The weakest v2 classifier classes are `carrot_rotten` (F1 0.855),
+  `orange_rotten` (0.865), and `bellpepper_fresh` (0.866). These are
+  still materially stronger than the v1 minority-class floor.
+- KTH GroceryStoreDataset is type-only external evidence. It improves
+  the generalization story but cannot validate fresh/rotten labels.
 - Out-of-distribution photos (cluttered scenes, unusual angles, novel
-  varieties) trigger the classifier fallback or surface `unknown`
-  rather than a confident wrong answer.
+  varieties) trigger the classifier abstain stack, the crop/full-image
+  disagreement guard, or `unknown` rather than a confident wrong answer.
 - Binary freshness only.
 
 ## References
@@ -148,5 +159,5 @@ previous 0.438.
 - Kaggle Food Freshness Dataset: https://www.kaggle.com/datasets/ulnnproject/food-freshness-dataset
 - Streamlit docs: https://docs.streamlit.io/
 - Ultralytics YOLO26 docs: https://docs.ultralytics.com/models/yolo26/
-- timm EfficientNetV2: https://huggingface.co/docs/timm/models/efficientnetv2
+- timm DINOv3: https://huggingface.co/timm/vit_small_patch16_dinov3.lvd1689m
 - Grounding DINO: https://huggingface.co/IDEA-Research/grounding-dino-tiny

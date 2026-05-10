@@ -1,11 +1,13 @@
 [runtime]
 default_mode = "torch"
-detector_confidence = 0.30
+detector_confidence = 0.40
+# YOLO26n v2 is NMS-free; detector_iou is kept for Ultralytics API
+# compatibility and older config consumers.
 detector_iou = 0.45
 max_detections = 8
-classifier_image_size = 224
+classifier_image_size = 256
 fallback_threshold = 0.4
 
 [artifacts]
-detector = "artifacts/yolo26s_food_freshness.pt"
-classifier = "artifacts/efficientnetv2s_food_freshness.pt"
+detector = "artifacts/yolo26n_produce_v2.pt"
+classifier = "artifacts/dinov3_vits16_food_freshness_v2.pt"

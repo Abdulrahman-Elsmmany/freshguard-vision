@@ -1,9 +1,4 @@
-"""Ultralytics YOLO26 detector wrapper.
-
-Emits 24-class fine-grained Detections directly: each box carries the
-combined `<produce>_<freshness>` label produced by YOLO26 in a single
-forward pass. No second-stage classification on the hot path.
-"""
+"""Ultralytics YOLO26 detector wrapper for the v2 produce-only contract."""
 
 from __future__ import annotations
 
@@ -14,23 +9,27 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from freshness.utils.labels import parse_combined_label
-
 
 @dataclass(slots=True)
 class Detection:
-    combined_label: str
-    produce_type: str
-    freshness: str
+    """A localized produce candidate.
+
+    In v2 the detector is deliberately class-agnostic from the app's point of
+    view. YOLO26n is trained with one class, ``produce``, and the DINOv3
+    classifier supplies all type and freshness labels downstream.
+    """
+
     confidence: float
     box: tuple[float, float, float, float]
 
 
 class YOLO26Detector:
+    """Run the v2 YOLO26n produce localizer."""
+
     def __init__(
         self,
         model_path: str | Path,
-        confidence: float = 0.25,
+        confidence: float = 0.40,
         iou: float = 0.45,
         max_detections: int = 8,
     ) -> None:
@@ -53,6 +52,7 @@ class YOLO26Detector:
         return self._model
 
     def predict(self, image: Image.Image) -> list[Detection]:
+        """Return produce boxes sorted by detector confidence."""
         model = self._load()
         result = model.predict(
             source=np.array(image.convert("RGB")),
@@ -66,26 +66,13 @@ class YOLO26Detector:
         if result.boxes is None:
             return detections
 
-        names = result.names
-        for box, cls, conf in zip(
+        for box, conf in zip(
             result.boxes.xyxy.tolist(),
-            result.boxes.cls.tolist(),
             result.boxes.conf.tolist(),
             strict=False,
         ):
-            raw_label = names[int(cls)]
-            try:
-                produce_type, freshness = parse_combined_label(raw_label)
-            except ValueError:
-                # Skip detections with labels we can't map onto the 24-class
-                # contract (defensive — should never happen with the trained
-                # YOLO26s checkpoint).
-                continue
             detections.append(
                 Detection(
-                    combined_label=f"{produce_type}_{freshness}",
-                    produce_type=produce_type,
-                    freshness=freshness,
                     confidence=float(conf),
                     box=tuple(float(value) for value in box),
                 )

@@ -12,22 +12,19 @@ from pathlib import Path
 # ----------------------------------------------------------------------
 # Headline metrics — loaded once from eval_report.json. If the file is
 # absent (e.g. fresh clone before notebook 5 has run), fall back to the
-# numbers from the v0.2.0 release.
+# latest v2 Kaggle report values.
 # ----------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _EVAL_PATH = _REPO_ROOT / "eval_report.json"
 
 _FALLBACK = {
-    "macro_f1": 0.8115,
-    "top1_accuracy": 0.8412,
-    "joint_accuracy": 0.8341,
-    "joint_macro_f1": 0.7766,
-    "abstention_rate": 0.0409,
-    "detector_p": 0.864,
-    "detector_r": 0.729,
-    "detector_map50": 0.7516,
-    "detector_map5095": 0.7351,
-    "detector_conf": 0.25,
+    "macro_f1": 0.9478,
+    "top1_accuracy": 0.9490,
+    "kth_type_accuracy": 0.8995,
+    "kth_count": 955.0,
+    "detector_map50": 0.8763,
+    "detector_map5095": 0.8249,
+    "detector_conf": 0.40,
 }
 
 
@@ -40,19 +37,22 @@ def _load_metrics() -> dict[str, float]:
         return dict(_FALLBACK)
 
     classifier = data.get("classifier_only", {})
-    end_to_end = data.get("end_to_end", {})
-    detector = data.get("detector", {}).get("conf_0.25", {}).get("overall", {})
+    grocery = data.get("grocery_external_type_only", {})
+    detector_blocks = data.get("detector", {})
+    detector_conf = 0.40 if "conf_0.40" in detector_blocks else 0.25
+    detector = detector_blocks.get(f"conf_{detector_conf:.2f}", {}).get("overall", {})
+
+    def metric(value: object, fallback: float) -> float:
+        return float(value) if isinstance(value, int | float) else fallback
+
     return {
-        "macro_f1": classifier.get("macro_f1", _FALLBACK["macro_f1"]),
-        "top1_accuracy": classifier.get("top1_accuracy", _FALLBACK["top1_accuracy"]),
-        "joint_accuracy": end_to_end.get("joint_accuracy_excl_abstain", _FALLBACK["joint_accuracy"]),
-        "joint_macro_f1": end_to_end.get("macro_f1_excl_abstain", _FALLBACK["joint_macro_f1"]),
-        "abstention_rate": end_to_end.get("abstention_rate", _FALLBACK["abstention_rate"]),
-        "detector_p": detector.get("precision", _FALLBACK["detector_p"]),
-        "detector_r": detector.get("recall", _FALLBACK["detector_r"]),
-        "detector_map50": detector.get("mAP50", _FALLBACK["detector_map50"]),
-        "detector_map5095": detector.get("mAP50_95", _FALLBACK["detector_map5095"]),
-        "detector_conf": 0.25,
+        "macro_f1": metric(classifier.get("macro_f1"), _FALLBACK["macro_f1"]),
+        "top1_accuracy": metric(classifier.get("top1_accuracy"), _FALLBACK["top1_accuracy"]),
+        "kth_type_accuracy": metric(grocery.get("type_accuracy"), _FALLBACK["kth_type_accuracy"]),
+        "kth_count": metric(grocery.get("count"), _FALLBACK["kth_count"]),
+        "detector_map50": metric(detector.get("mAP50"), _FALLBACK["detector_map50"]),
+        "detector_map5095": metric(detector.get("mAP50_95"), _FALLBACK["detector_map5095"]),
+        "detector_conf": detector_conf,
     }
 
 
@@ -65,18 +65,16 @@ HEADLINE_METRICS: dict[str, float] = _load_metrics()
 # ----------------------------------------------------------------------
 PROCEDURE_HTML = """
 <p>
-A single forward pass of <strong>YOLO26s</strong> predicts produce type
-<em>and</em> freshness in one shot, returning zero or more boxes per image
-with a 24-class label and a confidence score. When the detector finds
-nothing — out-of-distribution scenes, unusual angles, novel varieties —
-an <strong>EfficientNetV2-S</strong> classifier runs on the full image
-as a fallback. Both stages share the same 24-class label space, so their
-outputs render identically downstream.
+The v2 pipeline separates localization from classification.
+<strong>YOLO26n</strong> predicts one class — produce — and returns only
+boxes plus confidence. A <strong>DINOv3-S/16</strong> classifier assigns
+the 24-class label to each crop, so produce type and freshness come from
+one authority instead of from the detector.
 </p>
 <p>
-The hot path is the detector. The classifier is consulted only on
-silence. If both refuse to commit, the system answers honestly:
-<code>unknown / n_a</code>.
+The classifier also runs once on the full image as a sanity check. If the
+crop classifier and full-image classifier both commit but disagree on
+produce type, the system answers honestly: <code>unknown / n_a</code>.
 </p>
 """
 
@@ -108,24 +106,24 @@ imbalance.
 LIMITATIONS_HTML = """
 <ul>
   <li>
-    Detection ground truth is <strong>Grounding DINO pseudo-labels</strong>
-    with programmatic area filters, not full manual annotation. Per-class
-    noise was sampled visually in the QA pass.
+    Detector supervision is mixed: Food Freshness and KTH contribute
+    full-image bootstrap boxes, while Open Images contributes official
+    object boxes. It is not a fully manual box-annotation benchmark.
   </li>
   <li>
-    <strong>okra_rotten</strong> (F1 0.33) and
-    <strong>okra_fresh</strong> (F1 0.60) are the weakest classes —
-    raw counts are small (~973 total) and the rotten subset is
-    particularly noisy. Treat predictions for these classes
-    skeptically.
+    <strong>carrot_rotten</strong> (F1 0.855),
+    <strong>orange_rotten</strong> (F1 0.865), and
+    <strong>bellpepper_fresh</strong> (F1 0.866) are the weakest classes
+    in the v2 classifier report; all still clear the old v1 minority-class
+    floor by a wide margin.
   </li>
   <li>
     <strong>bitter_gourd</strong> has only 684 raw examples; per-class
     metrics should be read with that floor in mind.
   </li>
   <li>
-    Out-of-distribution photos trigger the classifier fallback or
-    the <code>unknown</code> abstain rather than a confident wrong
+    Out-of-distribution photos trigger the classifier abstain stack or
+    the crop/full-image disagreement guard rather than a confident wrong
     answer.
   </li>
   <li>Binary freshness only — no shelf-life forecast, no
@@ -139,9 +137,9 @@ LIMITATIONS_HTML = """
 # ----------------------------------------------------------------------
 def architecture_rows() -> list[tuple[str, str, str]]:
     return [
-        ("Hot path", "YOLO26s · 24-class", "single forward pass"),
-        ("Fallback", "EfficientNetV2-S · 24-class", "full-image, only on detector silence"),
-        ("Abstain", "unknown / n_a", "fallback confidence < 0.40"),
+        ("Localizer", "YOLO26n · produce-only", "boxes, no type/freshness opinion"),
+        ("Classifier", "DINOv3-S/16 · 24-class", "crop authority for type and freshness"),
+        ("Abstain", "unknown / n_a", "low confidence or crop/full-image disagreement"),
     ]
 
 
@@ -151,5 +149,5 @@ def architecture_rows() -> list[tuple[str, str, str]]:
 # ----------------------------------------------------------------------
 MODEL_CARD_MARKDOWN = (
     "## Procedure\n\n"
-    "Single-stage YOLO26s + EfficientNetV2-S fallback. See the Field Guide page in the app."
+    "YOLO26n produce localizer + DINOv3-S/16 classifier. See the Field Guide page in the app."
 )

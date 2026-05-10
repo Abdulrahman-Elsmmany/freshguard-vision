@@ -21,9 +21,9 @@ from freshness.utils.images import (
 from freshness.utils.labels import display_freshness_name, display_type_name
 
 SOURCE_LABEL = {
-    "detector": "DETECTOR · YOLO26s",
-    "classifier": "FALLBACK · EfficientNetV2-S",
-    "ensemble": "ENSEMBLE · CLASSIFIER OVERRIDE",
+    "detector": "DETECTOR · YOLO26n",
+    "classifier": "CLASSIFIER · DINOv3-S/16",
+    "ensemble": "CLASSIFIER · DINOv3-S/16",
     "unknown": "ABSTAIN",
 }
 
@@ -33,7 +33,7 @@ SOURCE_LABEL = {
 ABSTAIN_REASON_COPY: dict[str, tuple[str, str]] = {
     "low_top1": (
         "LOW CONFIDENCE",
-        "The fallback classifier's top guess sat below the confidence floor — "
+        "The DINOv3 classifier's top guess sat below the confidence floor — "
         "likely an unfamiliar fruit, a tight crop, or noise.",
     ),
     "high_entropy": (
@@ -47,15 +47,15 @@ ABSTAIN_REASON_COPY: dict[str, tuple[str, str]] = {
         "The top two classes were within a few percent of each other. The "
         "system declined to commit when both options were plausible.",
     ),
-    "detector_classifier_disagree": (
-        "DETECTOR ↔ CLASSIFIER DISAGREEMENT",
-        "The detector and fallback classifier voted for different produce "
-        "types with similar confidence. Honest abstain rather than picking "
-        "the louder one.",
+    "crop_full_image_disagree": (
+        "CROP ↔ FULL-IMAGE DISAGREEMENT",
+        "The crop classifier and full-image sanity check committed to "
+        "different produce types. The system treated that as an "
+        "out-of-distribution signal.",
     ),
     "no_classifier": (
         "NO FALLBACK AVAILABLE",
-        "The detector found nothing and no fallback classifier is loaded.",
+        "The detector found nothing and no classifier is loaded.",
     ),
 }
 
@@ -148,18 +148,17 @@ def _render_pipeline_unavailable(error: str | None) -> None:
 
 def render_page() -> None:
     render_hero(
-        eyebrow="FRESHGUARD VISION · 2026 EDITION · v0.2.0",
+        eyebrow="FRESHGUARD VISION · 2026 EDITION · v0.3.0",
         title="An almanac of <em>freshness</em>.",
         latin_cycle=[PRODUCE_LATIN[p] for p in PRODUCE_TYPES],
         kicker=(
-            "Upload a specimen. A single-stage YOLO26s detector localizes "
-            "and labels produce on twenty-four fine-grained classes, with "
-            "an EfficientNetV2-S classifier in reserve for what it misses."
+            "Upload a specimen. YOLO26n localizes produce, then a DINOv3-S/16 "
+            "classifier assigns the twenty-four fine-grained freshness labels."
         ),
         specimen_no="0024",
     )
 
-    # First-time model load takes a few seconds (YOLO + EfficientNetV2-S);
+    # First-time model load takes a few seconds (YOLO + DINOv3);
     # st.cache_resource keeps it warm across reruns, so the spinner only
     # shows on the very first page paint.
     with st.spinner("Calibrating instruments…"):
@@ -220,9 +219,9 @@ def render_page() -> None:
         n = len(detections) if not is_unknown else 0
         plural = "S" if n != 1 else ""
         caption = (
-            f"NO CONFIDENT PREDICTION"
+            "NO CONFIDENT PREDICTION"
             if is_unknown
-            else f"{n} OBSERVATION{plural}  ·  CONF ≥ 0.45"
+            else f"{n} OBSERVATION{plural}  ·  CONF ≥ 0.40"
         )
         st.image(overlay, caption=caption, width="stretch")
 
@@ -235,7 +234,7 @@ def render_page() -> None:
                 reason or "",
                 (
                     "SPECIMEN NOT RECOGNIZED",
-                    "Neither the detector nor the fallback classifier was "
+                    "Neither the detector nor the classifier was "
                     "confident enough to commit. The system abstained "
                     "rather than guess.",
                 ),
@@ -258,9 +257,9 @@ def render_page() -> None:
             st.markdown(
                 """
                 <div class="fg-warning">
-                  <strong>FALLBACK PATH</strong>
-                  The detector found no boxes. The classifier was run on
-                  the full image as a single-crop guess; no localization.
+                  <strong>CLASSIFIER AUTHORITY</strong>
+                  The DINOv3 classifier supplies produce type and freshness.
+                  YOLO26n supplies only localization boxes.
                 </div>
                 """,
                 unsafe_allow_html=True,
