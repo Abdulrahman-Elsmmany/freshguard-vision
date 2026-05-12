@@ -1,14 +1,10 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/thumbnail-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/thumbnail-light.png">
-  <img alt="FreshGuard Vision — 24-class produce freshness detection" src="./assets/thumbnail-dark.png" width="100%">
-</picture>
+<img alt="FreshGuard Vision — 24-class produce freshness detection" src="./assets/thumbnail-dark.png" width="100%">
 
 # FreshGuard Vision
 
 > v2 rebuild complete: **YOLO26n produce localization** plus a **DINOv3-S/16 24-class freshness classifier**. Local Streamlit demo, honest cluster-disjoint metrics, and an external KTH GroceryStoreDataset type benchmark.
 
-[Live demo](#quickstart) · [Eval report](./eval_report.md) · [Training notebooks](./notebooks/) · [PRD](./PRD.md)
+[Demo](#demo) · [Quickstart](#quickstart) · [Eval report](./eval_report.md) · [Training notebooks](./notebooks/) · [PRD](./PRD.md)
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3120/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -16,6 +12,18 @@
 [![PyTorch 2.8](https://img.shields.io/badge/pytorch-2.8-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
 [![Ultralytics YOLO26n](https://img.shields.io/badge/ultralytics-YOLO26n-111111.svg)](https://docs.ultralytics.com/models/yolo26/)
 [![Macro F1](https://img.shields.io/badge/macro_F1-0.9478-06b6d4.svg)](./eval_report.md)
+
+---
+
+## Demo
+
+End-to-end run through the **Specimen Lab** page: image upload → YOLO26n produce localization → DINOv3-S/16 24-class freshness label per box → confidence + source badges. The final clip exercises the abstain stack on an out-of-distribution image.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Abdulrahman-Elsmmany/Abdulrahman-Elsmmany/main/assets/demos/freshguard-demo.gif" alt="FreshGuard Specimen Lab — end-to-end inference demo" width="100%">
+</p>
+
+> The GIF is hosted in [the profile repo](https://github.com/Abdulrahman-Elsmmany/Abdulrahman-Elsmmany/tree/main/assets/demos) to keep this repo lean. To run it yourself, follow [Quickstart](#quickstart) below.
 
 ---
 
@@ -33,6 +41,10 @@
 Macro F1 is the headline because top-1 accuracy hides minority-class failure under the **41 : 1** class imbalance baked into the source dataset. The KTH row is type-only external evidence; KTH has no fresh/rotten labels, so it is not mixed into the canonical 24-class freshness metric. Numbers come from `eval_report.json`, produced by [`notebooks/kaggle_05_evaluate_v2.ipynb`](notebooks/kaggle_05_evaluate_v2.ipynb).
 
 ## Architecture
+
+<img alt="FreshGuard Inference Pipeline — YOLO26n produce localizer plus DINOv3-S/16 crop and full-image classifiers with crop ↔ full-image agreement gate" src="./assets/architecture-art-dark.png" width="100%">
+
+The flow below is the same pipeline as the figure above, rendered as a flowchart so the routing logic is precise and reviewable.
 
 ```mermaid
 flowchart LR
