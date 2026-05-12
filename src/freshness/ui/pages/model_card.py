@@ -6,6 +6,8 @@ with a four-up headline scoreboard sourced from `eval_report.json`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 from freshness.constants import PRODUCE_LATIN, PRODUCE_TYPES
@@ -18,6 +20,12 @@ from freshness.ui.content import (
 )
 from freshness.ui.styles import render_hero, render_rule, render_section
 from freshness.utils.labels import display_type_name
+
+CONFUSION_MATRIX_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "eval"
+    / "classifier_confusion_matrix_v2.png"
+)
 
 
 def _scoreboard_html() -> str:
@@ -91,6 +99,26 @@ def _specimens_grid() -> str:
     return f'<div class="fg-specimens">{"".join(cells)}</div>'
 
 
+def _render_confusion_matrix() -> None:
+    if not CONFUSION_MATRIX_PATH.exists():
+        return
+
+    st.markdown(
+        """
+        <div class="fg-figure-label">
+          <span>CONFUSION MATRIX</span>
+          <strong>DINOv3-S/16 · Food Freshness test split</strong>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.image(
+        str(CONFUSION_MATRIX_PATH),
+        caption="Classifier confusion matrix for the v2 24-class freshness head.",
+        width="stretch",
+    )
+
+
 def render_page() -> None:
     render_hero(
         eyebrow="FIELD GUIDE · v2 · CLUSTER-DISJOINT TEST SPLIT",
@@ -132,6 +160,7 @@ def render_page() -> None:
     # III. Results
     render_section("III.", "RESULTS", "Headline metrics in detail")
     st.markdown(_detector_table(), unsafe_allow_html=True)
+    _render_confusion_matrix()
 
     render_rule()
 

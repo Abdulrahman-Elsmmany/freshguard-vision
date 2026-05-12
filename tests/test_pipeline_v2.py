@@ -4,10 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import torch
 from PIL import Image
+from torch import nn
 
 from freshness.constants import COMBINED_CLASSES, COMBINED_UNKNOWN, FRESHNESS_NA, UNKNOWN_TYPE
-from freshness.inference.classifier import ClassifierPrediction, _validate_class_names
+from freshness.inference.classifier import (
+    ClassifierPrediction,
+    DinoV3FreshnessRuntime,
+    _validate_class_names,
+)
 from freshness.inference.detector import Detection
 from freshness.inference.pipeline import FreshnessPipeline, PipelineUnavailableError
 
@@ -46,6 +52,17 @@ class FakeClassifier:
         if not self._predictions:
             raise AssertionError("No fake classifier predictions left.")
         return self._predictions.pop(0)
+
+
+class ConstantLogitModel(nn.Module):
+    def __init__(self, winner_index: int) -> None:
+        super().__init__()
+        self.winner_index = winner_index
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        logits = torch.zeros((tensor.shape[0], len(COMBINED_CLASSES)), dtype=torch.float32)
+        logits[:, self.winner_index] = 10.0
+        return logits
 
 
 class PipelineV2Tests(unittest.TestCase):
@@ -109,6 +126,42 @@ class PipelineV2Tests(unittest.TestCase):
         self.assertEqual(result[0].box, (0.0, 0.0, 100.0, 100.0))
         self.assertEqual(result[0].combined_label, "tomato_rotten")
         self.assertEqual(result[0].source, "classifier")
+
+    def test_progress_callback_reports_pipeline_order(self) -> None:
+        pipeline = self._pipeline(
+            [Detection(confidence=0.8, box=self.box)],
+            [_prediction("apple_fresh"), _prediction("apple_fresh")],
+        )
+        phases: list[str] = []
+
+        pipeline.predict(self.image, progress_callback=lambda event: phases.append(event.phase))
+
+        self.assertEqual(
+            phases,
+            [
+                "image_loaded",
+                "detector_started",
+                "detector_done",
+                "classifier_started",
+                "classifier_done",
+                "render_ready",
+            ],
+        )
+
+    def test_dinov3_predict_many_matches_single_predict(self) -> None:
+        runtime = DinoV3FreshnessRuntime.__new__(DinoV3FreshnessRuntime)
+        runtime.class_names = COMBINED_CLASSES
+        runtime.image_size = 256
+        runtime.crop_pct = 1.0
+        runtime.device = torch.device("cpu")
+        runtime.model = ConstantLogitModel(COMBINED_CLASSES.index("apple_fresh"))
+
+        single = runtime.predict(self.image)
+        batched = runtime.predict_many([self.image, self.image])
+
+        self.assertEqual([item.combined_label for item in batched], ["apple_fresh", "apple_fresh"])
+        self.assertEqual(batched[0].combined_label, single.combined_label)
+        self.assertAlmostEqual(batched[0].confidence, single.confidence)
 
     def test_missing_classifier_artifact_makes_pipeline_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

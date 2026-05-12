@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from html import escape
 from io import BytesIO
 
 import streamlit as st
 from PIL import Image
 
 from freshness.constants import PRODUCE_LATIN, PRODUCE_TYPES
-from freshness.inference.pipeline import DetectedProduce
+from freshness.inference.pipeline import DetectedProduce, PipelineProgress
 from freshness.ui.runtime import load_pipeline
 from freshness.ui.styles import render_hero, render_section
 from freshness.utils.images import (
@@ -63,6 +64,14 @@ STATE_INK = {
     "fresh": INK_FRESH,
     "rotten": INK_ROTTEN,
     "n_a": INK_UNKNOWN,
+}
+PROGRESS_LABELS = {
+    "image_loaded": "DECODE",
+    "detector_started": "LOCALIZE",
+    "detector_done": "BOXES",
+    "classifier_started": "CLASSIFY",
+    "classifier_done": "DECIDE",
+    "render_ready": "RENDER",
 }
 
 
@@ -146,15 +155,57 @@ def _render_pipeline_unavailable(error: str | None) -> None:
     )
 
 
+def _render_upload_receipt(uploaded_name: str, image: Image.Image) -> None:
+    st.markdown(
+        f"""
+        <div class="fg-upload-receipt">
+          <div>
+            <div class="fg-upload-receipt__label">SPECIMEN SEALED</div>
+            <div class="fg-upload-receipt__name">{escape(uploaded_name)}</div>
+          </div>
+          <div class="fg-upload-receipt__meta">
+            {image.width} × {image.height}px · RGB
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _progress_html(progress: PipelineProgress) -> str:
+    pct = min(100, max(0, round(progress.completed / progress.total * 100)))
+    phase = PROGRESS_LABELS.get(progress.phase, progress.phase.upper())
+    return f"""
+    <div class="fg-processing">
+      <div class="fg-processing__scan"></div>
+      <div class="fg-processing__row">
+        <div>
+          <div class="fg-processing__label">ANALYSIS IN PROGRESS</div>
+          <div class="fg-processing__phase">{phase}</div>
+        </div>
+        <div class="fg-processing__pct">{pct:03d}%</div>
+      </div>
+      <div class="fg-processing__message">{escape(progress.message)}</div>
+      <div class="fg-processing__track">
+        <div class="fg-processing__bar" style="width:{pct}%"></div>
+      </div>
+    </div>
+    """
+
+
+def _render_processing(
+    slot: st.delta_generator.DeltaGenerator,
+    progress: PipelineProgress,
+) -> None:
+    slot.markdown(_progress_html(progress), unsafe_allow_html=True)
+
+
 def render_page() -> None:
     render_hero(
         eyebrow="FRESHGUARD VISION · 2026 EDITION · v0.3.0",
         title="An almanac of <em>freshness</em>.",
         latin_cycle=[PRODUCE_LATIN[p] for p in PRODUCE_TYPES],
-        kicker=(
-            "Upload a specimen. YOLO26n localizes produce, then a DINOv3-S/16 "
-            "classifier assigns the twenty-four fine-grained freshness labels."
-        ),
+        kicker="",
         specimen_no="0024",
     )
 
@@ -171,7 +222,11 @@ def render_page() -> None:
     render_section("I.", "DEPOSIT", "Submit specimen")
     st.markdown(
         '<div class="fg-deposit">'
-        '<div class="fg-deposit__caption">JPG · JPEG · PNG · WEBP &nbsp; / &nbsp; max 4096 px</div>',
+        '<div class="fg-deposit__caption">JPG · JPEG · PNG · WEBP &nbsp; / &nbsp; max 4096 px</div>'
+        '<div class="fg-deposit__guide">'
+        'Upload one produce image. YOLO26n finds the produce area, then '
+        'DINOv3-S/16 assigns the freshness label.'
+        '</div>',
         unsafe_allow_html=True,
     )
     uploaded = st.file_uploader(
@@ -188,10 +243,26 @@ def render_page() -> None:
         )
         return
 
+    processing_slot = st.empty()
+
     try:
         image = Image.open(BytesIO(uploaded.getvalue())).convert("RGB")
-        detections = pipeline.predict(image)
+        _render_upload_receipt(uploaded.name, image)
+        _render_processing(
+            processing_slot,
+            PipelineProgress(
+                phase="image_loaded",
+                message="Upload received. Preparing local models.",
+                completed=1,
+                total=5,
+            ),
+        )
+        detections = pipeline.predict(
+            image,
+            progress_callback=lambda event: _render_processing(processing_slot, event),
+        )
     except ImageTooLargeError as exc:
+        processing_slot.empty()
         st.markdown(
             f'<div class="fg-warning"><strong>IMAGE TOO LARGE</strong>{exc}</div>',
             unsafe_allow_html=True,
@@ -210,6 +281,7 @@ def render_page() -> None:
         specimen_numbers=specimen_numbers,
         latin_names=latin_names,
     )
+    processing_slot.empty()
 
     # Render two columns: SPECIMEN frame on the left, FIELD NOTES on the right.
     left, right = st.columns([1.4, 1.0], gap="large")

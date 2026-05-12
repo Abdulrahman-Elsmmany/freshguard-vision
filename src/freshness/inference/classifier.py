@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 
 import numpy as np
 import torch
@@ -115,6 +116,59 @@ def _entropy_nats(probs: np.ndarray) -> float:
     return float(-np.sum(probs * np.log(np.clip(probs, 1e-12, 1.0))))
 
 
+def _prediction_from_probs(
+    probs: np.ndarray,
+    class_names: tuple[str, ...],
+    *,
+    fallback_threshold: float,
+    top2_margin: float,
+    entropy_threshold: float,
+) -> ClassifierPrediction:
+    probabilities = {
+        label: float(prob)
+        for label, prob in zip(class_names, probs, strict=True)
+    }
+
+    order = np.argsort(probs)[::-1]
+    top_label = class_names[int(order[0])]
+    top_prob = float(probs[int(order[0])])
+    second_prob = float(probs[int(order[1])]) if len(order) > 1 else 0.0
+    margin = top_prob - second_prob
+    entropy = _entropy_nats(probs)
+
+    abstain_reason: str | None = None
+    if top_prob < fallback_threshold:
+        abstain_reason = "low_top1"
+    elif entropy > entropy_threshold:
+        abstain_reason = "high_entropy"
+    elif margin < top2_margin:
+        abstain_reason = "narrow_margin"
+
+    if abstain_reason is not None:
+        return ClassifierPrediction(
+            combined_label=COMBINED_UNKNOWN,
+            produce_type=UNKNOWN_TYPE,
+            freshness=FRESHNESS_NA,
+            confidence=top_prob,
+            probabilities=probabilities,
+            entropy=entropy,
+            top2_margin=margin,
+            abstain_reason=abstain_reason,
+        )
+
+    produce_type, freshness = parse_combined_label(top_label)
+    return ClassifierPrediction(
+        combined_label=top_label,
+        produce_type=produce_type,
+        freshness=freshness,
+        confidence=top_prob,
+        probabilities=probabilities,
+        entropy=entropy,
+        top2_margin=margin,
+        abstain_reason=None,
+    )
+
+
 def _extract_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
     if isinstance(checkpoint, dict):
         for key in ("model_state_dict", "state_dict", "model", "ema_state_dict"):
@@ -194,55 +248,49 @@ class DinoV3FreshnessRuntime:
         entropy_threshold: float = DEFAULT_ENTROPY_THRESHOLD,
     ) -> ClassifierPrediction:
         """Classify one image or crop, returning an abstain reason when uncommitted."""
-        prepared = open_image(image)
-        tensor = _preprocess(prepared, self.image_size, self.crop_pct).to(self.device)
+        return self.predict_many(
+            [image],
+            fallback_threshold=fallback_threshold,
+            top2_margin=top2_margin,
+            entropy_threshold=entropy_threshold,
+        )[0]
+
+    def predict_many(
+        self,
+        images: Sequence[Image.Image],
+        fallback_threshold: float = DEFAULT_TOP1_THRESHOLD,
+        top2_margin: float = DEFAULT_TOP2_MARGIN,
+        entropy_threshold: float = DEFAULT_ENTROPY_THRESHOLD,
+    ) -> list[ClassifierPrediction]:
+        """Classify multiple images in one batched DINOv3 forward pass."""
+        if not images:
+            return []
+
+        tensors = [
+            _preprocess(open_image(image), self.image_size, self.crop_pct)
+            for image in images
+        ]
+        tensor = torch.cat(tensors, dim=0).to(self.device)
         tensor_flip = torch.flip(tensor, dims=[3])
 
-        with torch.no_grad():
-            logits = self.model(tensor).cpu().numpy()[0]
-            logits_flip = self.model(tensor_flip).cpu().numpy()[0]
-        probs = (_softmax(logits) + _softmax(logits_flip)) / 2.0
+        with torch.inference_mode():
+            logits = self.model(tensor).cpu().numpy()
+            logits_flip = self.model(tensor_flip).cpu().numpy()
 
-        probabilities = {
-            label: float(prob)
-            for label, prob in zip(self.class_names, probs, strict=True)
-        }
-
-        order = np.argsort(probs)[::-1]
-        top_label = self.class_names[int(order[0])]
-        top_prob = float(probs[int(order[0])])
-        second_prob = float(probs[int(order[1])]) if len(order) > 1 else 0.0
-        margin = top_prob - second_prob
-        entropy = _entropy_nats(probs)
-
-        abstain_reason: str | None = None
-        if top_prob < fallback_threshold:
-            abstain_reason = "low_top1"
-        elif entropy > entropy_threshold:
-            abstain_reason = "high_entropy"
-        elif margin < top2_margin:
-            abstain_reason = "narrow_margin"
-
-        if abstain_reason is not None:
-            return ClassifierPrediction(
-                combined_label=COMBINED_UNKNOWN,
-                produce_type=UNKNOWN_TYPE,
-                freshness=FRESHNESS_NA,
-                confidence=top_prob,
-                probabilities=probabilities,
-                entropy=entropy,
-                top2_margin=margin,
-                abstain_reason=abstain_reason,
-            )
-
-        produce_type, freshness = parse_combined_label(top_label)
-        return ClassifierPrediction(
-            combined_label=top_label,
-            produce_type=produce_type,
-            freshness=freshness,
-            confidence=top_prob,
-            probabilities=probabilities,
-            entropy=entropy,
-            top2_margin=margin,
-            abstain_reason=None,
+        probs = np.stack(
+            [
+                (_softmax(single_logits) + _softmax(single_logits_flip)) / 2.0
+                for single_logits, single_logits_flip in zip(logits, logits_flip, strict=True)
+            ]
         )
+
+        return [
+            _prediction_from_probs(
+                row,
+                self.class_names,
+                fallback_threshold=fallback_threshold,
+                top2_margin=top2_margin,
+                entropy_threshold=entropy_threshold,
+            )
+            for row in probs
+        ]

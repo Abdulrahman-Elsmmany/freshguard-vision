@@ -10,6 +10,7 @@ confident OOD guess.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -26,10 +27,27 @@ from freshness.inference.detector import Detection, YOLO26Detector
 from freshness.utils.images import crop_box, open_image
 
 DetectionSource = Literal["detector", "classifier", "ensemble", "unknown"]
+ProgressPhase = Literal[
+    "image_loaded",
+    "detector_started",
+    "detector_done",
+    "classifier_started",
+    "classifier_done",
+    "render_ready",
+]
+ProgressCallback = Callable[["PipelineProgress"], None]
 
 
 class PipelineUnavailableError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineProgress:
+    phase: ProgressPhase
+    message: str
+    completed: int
+    total: int
 
 
 @dataclass(slots=True)
@@ -64,7 +82,7 @@ def _from_classifier(prediction: ClassifierPrediction, image: Image.Image) -> De
 def _from_crop_classifier(
     prediction: ClassifierPrediction,
     detection: Detection,
-    image: Image.Image,
+    crop: Image.Image,
 ) -> DetectedProduce:
     return DetectedProduce(
         box=detection.box,
@@ -73,7 +91,7 @@ def _from_crop_classifier(
         freshness=prediction.freshness,
         confidence=prediction.confidence,
         source="classifier",
-        crop=crop_box(image, detection.box),
+        crop=crop,
         abstain_reason=None,
     )
 
@@ -82,6 +100,7 @@ def _abstain(
     image: Image.Image,
     *,
     box: tuple[float, float, float, float] | None = None,
+    crop: Image.Image | None = None,
     reason: str | None = None,
 ) -> DetectedProduce:
     return DetectedProduce(
@@ -91,20 +110,26 @@ def _abstain(
         freshness=FRESHNESS_NA,
         confidence=0.0,
         source="unknown",
-        crop=crop_box(image, box) if box is not None else image,
+        crop=crop or (crop_box(image, box) if box is not None else image),
         abstain_reason=reason,
     )
 
 
 def _resolve_crop_prediction(
     detection: Detection,
+    crop: Image.Image,
     crop_pred: ClassifierPrediction,
     full_image_pred: ClassifierPrediction,
     image: Image.Image,
 ) -> DetectedProduce:
     """Resolve one produce box under the v2 detector/classifier contract."""
     if crop_pred.abstain_reason is not None:
-        return _abstain(image, box=detection.box, reason=crop_pred.abstain_reason)
+        return _abstain(
+            image,
+            box=detection.box,
+            crop=crop,
+            reason=crop_pred.abstain_reason,
+        )
 
     if (
         full_image_pred.abstain_reason is None
@@ -113,10 +138,45 @@ def _resolve_crop_prediction(
         return _abstain(
             image,
             box=detection.box,
+            crop=crop,
             reason="crop_full_image_disagree",
         )
 
-    return _from_crop_classifier(crop_pred, detection, image)
+    return _from_crop_classifier(crop_pred, detection, crop)
+
+
+def _emit(
+    progress_callback: ProgressCallback | None,
+    phase: ProgressPhase,
+    message: str,
+    completed: int,
+    total: int,
+) -> None:
+    if progress_callback is not None:
+        progress_callback(
+            PipelineProgress(
+                phase=phase,
+                message=message,
+                completed=completed,
+                total=max(total, 1),
+            )
+        )
+
+
+def _predict_many(
+    classifier: DinoV3FreshnessRuntime,
+    images: Sequence[Image.Image],
+    fallback_threshold: float,
+) -> list[ClassifierPrediction]:
+    if hasattr(classifier, "predict_many"):
+        return classifier.predict_many(
+            images,
+            fallback_threshold=fallback_threshold,
+        )
+    return [
+        classifier.predict(image, fallback_threshold=fallback_threshold)
+        for image in images
+    ]
 
 
 class FreshnessPipeline:
@@ -183,29 +243,74 @@ class FreshnessPipeline:
             fallback_threshold=float(runtime_cfg["fallback_threshold"]),
         )
 
-    def predict(self, image: Image.Image) -> list[DetectedProduce]:
+    def predict(
+        self,
+        image: Image.Image,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[DetectedProduce]:
         image = open_image(image)
+        _emit(progress_callback, "image_loaded", "Image decoded and size-checked.", 1, 5)
+
+        _emit(progress_callback, "detector_started", "YOLO26n is localizing produce.", 2, 5)
         detections = self.detector.predict(image)[: self.max_detections]
-        full_image_pred = self.classifier.predict(
-            image,
-            fallback_threshold=self.fallback_threshold,
+        _emit(
+            progress_callback,
+            "detector_done",
+            f"YOLO26n returned {len(detections)} produce candidate(s).",
+            3,
+            5,
         )
 
         if not detections:
+            _emit(
+                progress_callback,
+                "classifier_started",
+                "DINOv3-S/16 is classifying the full image.",
+                4,
+                5,
+            )
+            full_image_pred = _predict_many(
+                self.classifier,
+                [image],
+                self.fallback_threshold,
+            )[0]
+            _emit(progress_callback, "classifier_done", "Classification complete.", 5, 5)
             if full_image_pred.abstain_reason is not None:
-                return [_abstain(image, reason=full_image_pred.abstain_reason)]
-            return [_from_classifier(full_image_pred, image)]
+                results = [_abstain(image, reason=full_image_pred.abstain_reason)]
+            else:
+                results = [_from_classifier(full_image_pred, image)]
+            _emit(progress_callback, "render_ready", "Rendering field notes.", 5, 5)
+            return results
+
+        crops = [crop_box(image, detection.box) for detection in detections]
+        classify_inputs = [image, *crops]
+        _emit(
+            progress_callback,
+            "classifier_started",
+            f"DINOv3-S/16 is classifying {len(classify_inputs)} view(s).",
+            4,
+            5,
+        )
+        predictions = _predict_many(
+            self.classifier,
+            classify_inputs,
+            self.fallback_threshold,
+        )
+        full_image_pred = predictions[0]
+        crop_predictions = predictions[1:]
+        _emit(progress_callback, "classifier_done", "Classification complete.", 5, 5)
 
         results: list[DetectedProduce] = []
-        for detection in detections:
-            crop = crop_box(image, detection.box)
-            crop_pred = self.classifier.predict(
-                crop,
-                fallback_threshold=self.fallback_threshold,
-            )
+        for detection, crop, crop_pred in zip(
+            detections,
+            crops,
+            crop_predictions,
+            strict=True,
+        ):
             results.append(
-                _resolve_crop_prediction(detection, crop_pred, full_image_pred, image)
+                _resolve_crop_prediction(detection, crop, crop_pred, full_image_pred, image)
             )
 
         results.sort(key=lambda r: r.confidence, reverse=True)
+        _emit(progress_callback, "render_ready", "Rendering annotated specimen plate.", 5, 5)
         return results
