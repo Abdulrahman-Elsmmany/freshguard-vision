@@ -87,9 +87,7 @@ STYLE_WIDGETS = """/* ==========================================================
   margin-top: 0.5rem !important;
 }
 :root[data-theme="dark"] [data-testid="stImage"] button,
-:root:not([data-theme]) [data-testid="stImage"] button,
-:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button,
-:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button {
+:root:not([data-theme]) [data-testid="stImage"] button {
   background: oklch(0.12 0.015 70) !important;
   border: 1px solid oklch(0.96 0.013 70 / 0.85) !important;
   color: oklch(0.97 0.013 70) !important;
@@ -97,10 +95,8 @@ STYLE_WIDGETS = """/* ==========================================================
 }
 :root[data-theme="dark"] [data-testid="stImage"] button:hover,
 :root:not([data-theme]) [data-testid="stImage"] button:hover,
-:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button:hover,
-:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button:hover,
-:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button:focus-visible,
-:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button:focus-visible {
+:root[data-theme="dark"] [data-testid="stImage"] button:focus-visible,
+:root:not([data-theme]) [data-testid="stImage"] button:focus-visible {
   background: oklch(0.08 0.012 70) !important;
   border-color: oklch(0.99 0.008 70) !important;
 }
@@ -115,6 +111,30 @@ STYLE_WIDGETS = """/* ==========================================================
   color: oklch(0.97 0.013 70) !important;
   fill: none !important;
   stroke: oklch(0.97 0.013 70) !important;
+}
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"],
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] {
+  background: oklch(0.12 0.015 70) !important;
+  border: 1px solid oklch(0.96 0.013 70 / 0.85) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow-sink) !important;
+}
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"]:hover,
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"]:hover,
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"]:focus-within,
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"]:focus-within {
+  background: oklch(0.08 0.012 70) !important;
+  border-color: oklch(0.99 0.008 70) !important;
+}
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] .stTooltipHoverTarget,
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] .stTooltipHoverTarget,
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] [data-testid="stTooltipHoverTarget"],
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] [data-testid="stTooltipHoverTarget"],
+:root[data-theme="dark"] [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button,
+:root:not([data-theme]) [data-testid="stElementToolbar"] [data-testid="stElementToolbarButton"] button {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
 }
 :root[data-theme="dark"] [data-testid="stTooltipContent"],
 :root:not([data-theme]) [data-testid="stTooltipContent"],
