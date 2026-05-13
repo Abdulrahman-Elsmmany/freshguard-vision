@@ -31,15 +31,23 @@ def _check_size(image: Image.Image) -> None:
         )
 
 
+def _as_rgb(image: Image.Image) -> Image.Image:
+    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, rgba).convert("RGB")
+    return image.convert("RGB")
+
+
 def open_image(source: str | Path | bytes | BytesIO | Image.Image) -> Image.Image:
     if isinstance(source, Image.Image):
-        image = source.convert("RGB")
+        image = _as_rgb(source)
     elif isinstance(source, str | Path):
-        image = Image.open(source).convert("RGB")
+        image = _as_rgb(Image.open(source))
     elif isinstance(source, bytes):
-        image = Image.open(BytesIO(source)).convert("RGB")
+        image = _as_rgb(Image.open(BytesIO(source)))
     elif isinstance(source, BytesIO):
-        image = Image.open(source).convert("RGB")
+        image = _as_rgb(Image.open(source))
     else:
         raise TypeError(f"Unsupported image source: {type(source)!r}")
     _check_size(image)

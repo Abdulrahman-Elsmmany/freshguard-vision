@@ -22,9 +22,11 @@ _FALLBACK = {
     "top1_accuracy": 0.9490,
     "kth_type_accuracy": 0.8995,
     "kth_count": 955.0,
-    "detector_map50": 0.8763,
-    "detector_map5095": 0.8249,
+    "detector_map50": 0.8693,
+    "detector_map5095": 0.8190,
     "detector_conf": 0.40,
+    "open_world_false_accept": 0.0873,
+    "open_world_positive_retention": 0.5951,
 }
 
 
@@ -41,6 +43,7 @@ def _load_metrics() -> dict[str, float]:
     detector_blocks = data.get("detector", {})
     detector_conf = 0.40 if "conf_0.40" in detector_blocks else 0.25
     detector = detector_blocks.get(f"conf_{detector_conf:.2f}", {}).get("overall", {})
+    open_world = data.get("open_world", {})
 
     def metric(value: object, fallback: float) -> float:
         return float(value) if isinstance(value, int | float) else fallback
@@ -53,6 +56,14 @@ def _load_metrics() -> dict[str, float]:
         "detector_map50": metric(detector.get("mAP50"), _FALLBACK["detector_map50"]),
         "detector_map5095": metric(detector.get("mAP50_95"), _FALLBACK["detector_map5095"]),
         "detector_conf": detector_conf,
+        "open_world_false_accept": metric(
+            open_world.get("detector_false_accept_rate"),
+            _FALLBACK["open_world_false_accept"],
+        ),
+        "open_world_positive_retention": metric(
+            open_world.get("positive_retention"),
+            _FALLBACK["open_world_positive_retention"],
+        ),
     }
 
 
@@ -75,6 +86,9 @@ one authority instead of from the detector.
 The classifier also runs once on the full image as a sanity check. If the
 crop classifier and full-image classifier both commit but disagree on
 produce type, the system answers honestly: <code>unknown / n_a</code>.
+Near-full-image detector boxes are treated as scene context when smaller
+produce boxes exist, and no-box uploads are rejected instead of being
+forced through the closed-set freshness classifier.
 </p>
 """
 
@@ -108,7 +122,14 @@ LIMITATIONS_HTML = """
   <li>
     Detector supervision is mixed: Food Freshness and KTH contribute
     full-image bootstrap boxes, while Open Images contributes official
-    object boxes. It is not a fully manual box-annotation benchmark.
+    object boxes plus negative/background examples. Runtime scene-box
+    suppression reduces the visible impact, but it is not a fully manual
+    box-annotation benchmark.
+  </li>
+  <li>
+    Open Images positive retention is <strong>0.5951</strong>. v2.1 is
+    intentionally stricter on non-produce uploads, but recovering more
+    valid web-style produce detections is the next detector-quality target.
   </li>
   <li>
     <strong>carrot_rotten</strong> (F1 0.855),
@@ -122,9 +143,14 @@ LIMITATIONS_HTML = """
     metrics should be read with that floor in mind.
   </li>
   <li>
-    Out-of-distribution photos trigger the classifier abstain stack or
-    the crop/full-image disagreement guard rather than a confident wrong
-    answer.
+    Out-of-distribution images trigger the detector/open-world gates,
+    classifier abstain stack, or the crop/full-image disagreement guard
+    rather than a confident wrong answer.
+  </li>
+  <li>
+    When the model is confident about produce type but split between
+    fresh and rotten, the app reports the type with freshness
+    <code>n_a</code>.
   </li>
   <li>Binary freshness only — no shelf-life forecast, no
     <em>medium</em> / partial-ripeness label.</li>
@@ -137,9 +163,10 @@ LIMITATIONS_HTML = """
 # ----------------------------------------------------------------------
 def architecture_rows() -> list[tuple[str, str, str]]:
     return [
-        ("Localizer", "YOLO26n · produce-only", "boxes, no type/freshness opinion"),
+        ("Localizer", "YOLO26n · produce-only", "item boxes, no type/freshness opinion"),
+        ("Open-world filters", "runtime post-processing", "drop scene boxes; reject weak full-frame boxes"),
         ("Classifier", "DINOv3-S/16 · 24-class", "crop authority for type and freshness"),
-        ("Abstain", "unknown / n_a", "low confidence or crop/full-image disagreement"),
+        ("Abstain", "unknown / n_a", "no produce, weak evidence, or crop/full-image disagreement"),
     ]
 
 

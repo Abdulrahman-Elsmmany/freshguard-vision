@@ -1,8 +1,8 @@
 # The FreshGuard Story
 
-> A living memoir of how this project actually unfolded — the brief, the failure on real photos, the diagnosis, the research, and the rebuild. I keep it open as I work and update it after every meaningful step, so by the time the demo records and the post goes up, the narrative is already complete.
+> A living memoir of how this project actually unfolded — the brief, the failure on real photos, the diagnosis, the research, and the rebuild. I keep it open as I work and update it after every meaningful step, so by the time another public release ships, the narrative is already complete.
 >
-> _Last updated: 2026-05-10_
+> _Last updated: 2026-05-13_
 
 ---
 
@@ -87,22 +87,33 @@ On 2026-05-10 the long Kaggle detector run timed out after reaching epoch 28/60,
 
 ---
 
-## Act 6 — Why this story is the portfolio
+## Act 6 — Why this story matters
 
-Most freshness classifier portfolios stop at Act 1 — clean dataset, good macro F1, README, done. The numbers are real, the project is real, but the model has never met a phone photo and nobody has been honest about it.
+Most freshness classifier repos stop at Act 1 — clean dataset, good macro F1, README, done. The numbers are real, the project is real, but the model has never met the open-world images people actually upload and nobody has been honest about it.
 
-What I want this repo to show is the loop you actually run as an ML engineer: **ship → test on real data → admit the gap honestly → diagnose at the feature level → research alternatives with current sources → rebuild from foundations up → measure on an external benchmark.** Every act in this story is a decision a real job would ask you to make, and the rebuild is the one that proves you'd make them. The first version was good enough to ship. The reason there's a second version is the part that's hard to fake.
+What I want this repo to show is the loop you actually run as an ML engineer: **ship → test on real data → admit the gap honestly → diagnose at the feature level → research alternatives with current sources → rebuild from foundations up → measure on an external benchmark.** Every act in this story is a decision a real project would ask you to make, and the rebuild is the one that proves you'd make them. The first version was good enough to ship. The reason there's a second version is the part that's hard to fake.
 
 When the v2 numbers land, the README headline shouldn't read like a hero shot. It should read like the receipt for a journey: 0/5 → 3/5 honest → 4/5 with an external benchmark to prove it generalizes.
+
+---
+
+## Act 7 — The open-world correction
+
+On 2026-05-12 I caught a wording problem and a model-system problem at the same time. I had been using "phone photos" as shorthand because the original smoke set came from my own camera and KTH is a grocery-photo benchmark. That shorthand was too narrow. The app is a public GitHub project, and the real input space is broader: web images, stock-like images, grouped produce, screenshots, cluttered scenes, and images that contain no produce at all.
+
+Two new local checks made the gap concrete. A car image from `C:\Users\abdoe\Desktop\test_img\DSC_5903.webp` produced one near-full-frame YOLO `produce` box at 0.8928 confidence, then the closed-set DINOv3 head called it `cucumber_fresh` at 0.4467. A grouped apple image from the same folder showed the opposite side of the detector problem: at the old 0.40 detector threshold it kept one real apple box and one almost-whole-image box, while the other apples lived just below the threshold. Lowering the detector threshold to 0.20 exposed those item boxes, but also made it clear that runtime post-processing had to drop scene-level boxes instead of rendering them as observations.
+
+I patched the local runtime as a v2.1 quality step, not a demo trick. The app now rejects no-box uploads instead of asking the 24-class classifier to guess, suppresses near-full-image boxes when smaller item-level boxes exist, rejects weak single full-frame commits as non-produce, and keeps type information when the classifier is split only on fresh versus rotten. That did not replace the proper training fix, so I moved the model-side v2.1 work onto existing validated data instead of a hand-built private set: notebook 00 now materializes Open Images V7 positive produce boxes and negative/background images, notebook 02 turns the negatives into empty YOLO labels, notebook 03 emits `yolo26n_produce_v2_1.pt`, and notebook 05 reports open-world false-accept and retention metrics from that source.
+
+On 2026-05-13 the v2.1 evaluation run finished and replaced the public report. The classifier numbers stayed where they should: **0.9478 macro F1** and **0.9490 top-1 accuracy** on the Food Freshness 24-class test split, with **0.8995** KTH type-only external accuracy across 955 official test images. The new detector landed at **0.8693 mAP50 / 0.8190 mAP50-95** and, more importantly for the open-world correction, measured an Open Images negative false-accept rate of **0.0873**. The tradeoff is now explicit instead of hidden: Open Images positive retention is **0.5951**, so v2.1 is stricter and more honest, but the next detector-quality target is recovering more valid web-style produce without re-opening the non-produce hallucination failure. On the local `C:\Users\abdoe\Desktop\test_img` folder, the car image now returns `unknown / n_a`, the grouped apple image keeps five item-level apple boxes with no full-frame scene box, and the apple freshness smoke images behave as the release story claims.
 
 ---
 
 ## How to use this story
 
 - **README hero copy** — Acts 1 + 6, condensed to four sentences.
-- **LinkedIn post** — Acts 2 + 4 + 6 (the failure → research → ship arc). Pull the sentence about confident wrong answers from Act 2 verbatim.
-- **Architecture diagram** — Act 5, the contract paragraph (detector = produce-only, classifier = sole authority on type and freshness).
-- **Thumbnail kicker** — Pick from: _"From 0/5 to honest."_ · _"A portfolio rebuild."_ · _"The gap between a benchmark and a phone photo."_
+- **Architecture diagram** — Acts 5 + 7, the contract paragraph plus the open-world filtering correction.
+- **Thumbnail kicker** — Pick from: _"From closed-set to honest."_ · _"A public model, tested in the open."_ · _"The gap between a benchmark and the web."_
 
 ---
 

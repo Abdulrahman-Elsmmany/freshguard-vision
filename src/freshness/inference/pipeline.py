@@ -25,6 +25,7 @@ from freshness.inference.classifier import (
 )
 from freshness.inference.detector import Detection, YOLO26Detector
 from freshness.utils.images import crop_box, open_image
+from freshness.utils.labels import parse_combined_label
 
 DetectionSource = Literal["detector", "classifier", "ensemble", "unknown"]
 ProgressPhase = Literal[
@@ -36,6 +37,10 @@ ProgressPhase = Literal[
     "render_ready",
 ]
 ProgressCallback = Callable[["PipelineProgress"], None]
+SCENE_BOX_AREA_THRESHOLD = 0.85
+SCENE_BOX_SUPPORT_AREA_THRESHOLD = 0.75
+OPEN_WORLD_LARGE_BOX_AREA_THRESHOLD = 0.90
+OPEN_WORLD_LARGE_BOX_CONFIDENCE_THRESHOLD = 0.55
 
 
 class PipelineUnavailableError(RuntimeError):
@@ -64,6 +69,32 @@ class DetectedProduce:
 
 def _full_image_box(image: Image.Image) -> tuple[float, float, float, float]:
     return (0.0, 0.0, float(image.width), float(image.height))
+
+
+def _box_area_fraction(image: Image.Image, box: tuple[float, float, float, float]) -> float:
+    x1, y1, x2, y2 = box
+    area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    return area / max(1.0, float(image.width * image.height))
+
+
+def _filter_scene_level_detections(
+    image: Image.Image,
+    detections: Sequence[Detection],
+) -> list[Detection]:
+    """Drop full-scene boxes when the detector also found item-level boxes."""
+    if len(detections) <= 1:
+        return list(detections)
+
+    areas = [_box_area_fraction(image, detection.box) for detection in detections]
+    has_item_level_box = any(area < SCENE_BOX_SUPPORT_AREA_THRESHOLD for area in areas)
+    if not has_item_level_box:
+        return list(detections)
+
+    return [
+        detection
+        for detection, area in zip(detections, areas, strict=True)
+        if area < SCENE_BOX_AREA_THRESHOLD
+    ]
 
 
 def _from_classifier(prediction: ClassifierPrediction, image: Image.Image) -> DetectedProduce:
@@ -96,6 +127,25 @@ def _from_crop_classifier(
     )
 
 
+def _from_type_known_classifier(
+    prediction: ClassifierPrediction,
+    detection: Detection,
+    crop: Image.Image,
+    produce_type: str,
+    type_confidence: float,
+) -> DetectedProduce:
+    return DetectedProduce(
+        box=detection.box,
+        combined_label=f"{produce_type}_{FRESHNESS_NA}",
+        produce_type=produce_type,
+        freshness=FRESHNESS_NA,
+        confidence=type_confidence,
+        source="classifier",
+        crop=crop,
+        abstain_reason="freshness_uncertain",
+    )
+
+
 def _abstain(
     image: Image.Image,
     *,
@@ -115,6 +165,39 @@ def _abstain(
     )
 
 
+def _freshness_uncertain_type(
+    prediction: ClassifierPrediction,
+) -> tuple[str, float] | None:
+    if prediction.abstain_reason != "narrow_margin":
+        return None
+
+    ranked = sorted(
+        prediction.probabilities.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if len(ranked) < 2:
+        return None
+
+    top_label, _ = ranked[0]
+    second_label, _ = ranked[1]
+    try:
+        top_type, top_freshness = parse_combined_label(top_label)
+        second_type, second_freshness = parse_combined_label(second_label)
+    except ValueError:
+        return None
+
+    if top_type != second_type or top_freshness == second_freshness:
+        return None
+
+    type_confidence = sum(
+        probability
+        for label, probability in prediction.probabilities.items()
+        if parse_combined_label(label)[0] == top_type
+    )
+    return top_type, min(1.0, type_confidence)
+
+
 def _resolve_crop_prediction(
     detection: Detection,
     crop: Image.Image,
@@ -123,12 +206,44 @@ def _resolve_crop_prediction(
     image: Image.Image,
 ) -> DetectedProduce:
     """Resolve one produce box under the v2 detector/classifier contract."""
+    known_type = _freshness_uncertain_type(crop_pred)
+    if known_type is not None:
+        produce_type, type_confidence = known_type
+        if (
+            full_image_pred.abstain_reason is None
+            and produce_type != full_image_pred.produce_type
+        ):
+            return _abstain(
+                image,
+                box=detection.box,
+                crop=crop,
+                reason="crop_full_image_disagree",
+            )
+        return _from_type_known_classifier(
+            crop_pred,
+            detection,
+            crop,
+            produce_type,
+            type_confidence,
+        )
+
     if crop_pred.abstain_reason is not None:
         return _abstain(
             image,
             box=detection.box,
             crop=crop,
             reason=crop_pred.abstain_reason,
+        )
+
+    if (
+        _box_area_fraction(image, detection.box) >= OPEN_WORLD_LARGE_BOX_AREA_THRESHOLD
+        and crop_pred.confidence < OPEN_WORLD_LARGE_BOX_CONFIDENCE_THRESHOLD
+    ):
+        return _abstain(
+            image,
+            box=detection.box,
+            crop=crop,
+            reason="non_produce_image",
         )
 
     if (
@@ -143,6 +258,10 @@ def _resolve_crop_prediction(
         )
 
     return _from_crop_classifier(crop_pred, detection, crop)
+
+
+def _result_sort_key(result: DetectedProduce) -> tuple[int, float]:
+    return (0 if result.source == "unknown" else 1, result.confidence)
 
 
 def _emit(
@@ -212,7 +331,7 @@ class FreshnessPipeline:
             raise PipelineUnavailableError(
                 f"Detector weights not found: {detector_path}. "
                 "Train YOLO26n on Kaggle (see notebooks/) or run "
-                "`python scripts/download_artifacts.py`."
+                "`uv run python scripts/download_artifacts.py`."
             )
         detector = YOLO26Detector(
             model_path=detector_path,
@@ -229,7 +348,7 @@ class FreshnessPipeline:
             raise PipelineUnavailableError(
                 f"Classifier weights not found: {classifier_path}. "
                 "Train DINOv3 on Kaggle (see notebooks/) or run "
-                "`python scripts/download_artifacts.py`."
+                "`uv run python scripts/download_artifacts.py`."
             )
         classifier = DinoV3FreshnessRuntime(
             weights_path=classifier_path,
@@ -252,11 +371,17 @@ class FreshnessPipeline:
         _emit(progress_callback, "image_loaded", "Image decoded and size-checked.", 1, 5)
 
         _emit(progress_callback, "detector_started", "YOLO26n is localizing produce.", 2, 5)
-        detections = self.detector.predict(image)[: self.max_detections]
+        raw_detections = self.detector.predict(image)
+        detections = _filter_scene_level_detections(image, raw_detections)[
+            : self.max_detections
+        ]
         _emit(
             progress_callback,
             "detector_done",
-            f"YOLO26n returned {len(detections)} produce candidate(s).",
+            (
+                f"YOLO26n returned {len(raw_detections)} candidate(s); "
+                f"{len(detections)} survived open-world filtering."
+            ),
             3,
             5,
         )
@@ -265,20 +390,18 @@ class FreshnessPipeline:
             _emit(
                 progress_callback,
                 "classifier_started",
-                "DINOv3-S/16 is classifying the full image.",
+                "No produce boxes survived; closed-set classifier is skipped.",
                 4,
                 5,
             )
-            full_image_pred = _predict_many(
-                self.classifier,
-                [image],
-                self.fallback_threshold,
-            )[0]
-            _emit(progress_callback, "classifier_done", "Classification complete.", 5, 5)
-            if full_image_pred.abstain_reason is not None:
-                results = [_abstain(image, reason=full_image_pred.abstain_reason)]
-            else:
-                results = [_from_classifier(full_image_pred, image)]
+            _emit(
+                progress_callback,
+                "classifier_done",
+                "Open-world gate rejected the image.",
+                5,
+                5,
+            )
+            results = [_abstain(image, reason="no_produce_detected")]
             _emit(progress_callback, "render_ready", "Rendering field notes.", 5, 5)
             return results
 
@@ -311,6 +434,6 @@ class FreshnessPipeline:
                 _resolve_crop_prediction(detection, crop, crop_pred, full_image_pred, image)
             )
 
-        results.sort(key=lambda r: r.confidence, reverse=True)
+        results.sort(key=_result_sort_key, reverse=True)
         _emit(progress_callback, "render_ready", "Rendering annotated specimen plate.", 5, 5)
         return results

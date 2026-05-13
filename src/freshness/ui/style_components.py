@@ -237,6 +237,16 @@ STYLE_COMPONENTS = """/* =======================================================
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
+.fg-card__note {
+  margin-top: 0.7rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+}
 
 /* ============================================================
    LAYER 5 — STATES & MISC

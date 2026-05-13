@@ -157,12 +157,22 @@
   "detector": {
     "conf_0.40": {
       "overall": {
-        "mAP50": 0.8763462327272031,
-        "mAP50_95": 0.8248572745519077
+        "mAP50": 0.8692734104751354,
+        "mAP50_95": 0.8189509512413149
       }
     }
   },
   "apple_smoke": [],
+  "open_world": {
+    "available": true,
+    "negative_count": 3470,
+    "detector_false_accept_rate": 0.08731988472622479,
+    "positive_count": 4366,
+    "positive_retention": 0.5950526797984426,
+    "grouped_count": 854,
+    "mean_detected_boxes_on_grouped": 3.560889929742389,
+    "negative_source": "open-images-v7"
+  },
   "contract": {
     "classes": [
       "apple_fresh",
@@ -190,7 +200,7 @@
       "tomato_fresh",
       "tomato_rotten"
     ],
-    "detector_checkpoint": "yolo26n_produce_v2.pt",
+    "detector_checkpoint": "yolo26n_produce_v2_1.pt",
     "classifier_checkpoint": "dinov3_vits16_food_freshness_v2.pt",
     "classifier_model_name": "vit_small_patch16_dinov3",
     "classifier_image_size": 256

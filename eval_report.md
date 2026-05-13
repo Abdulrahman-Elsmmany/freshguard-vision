@@ -1,4 +1,4 @@
-# FreshGuard v2 Evaluation Report
+# FreshGuard v2.1 Evaluation Report
 
 ## Food Freshness Canonical 24-Class Test
 
@@ -13,8 +13,19 @@
 
 ## Detector
 
-- mAP50: 0.8763
-- mAP50-95: 0.8249
+- mAP50: 0.8693
+- mAP50-95: 0.8190
+
+## Open-World Evaluation
+
+- Available: True
+- Negative source: open-images-v7
+- Negative count: 3470
+- Detector false accept rate: 0.08731988472622479
+- Positive count: 4366
+- Positive retention: 0.5950526797984426
+- Grouped proxy count: 854
+- Mean detected boxes on grouped proxy images: 3.560889929742389
 
 ## Five-Apple Smoke Set
 

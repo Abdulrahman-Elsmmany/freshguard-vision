@@ -5,12 +5,12 @@ authenticated). Falls back to a direct urllib download from the public
 release URL pattern.
 
 Usage:
-    python scripts/download_artifacts.py
-    python scripts/download_artifacts.py --tag v0.3.0
-    python scripts/download_artifacts.py --repo owner/freshguard-vision
+    uv run python scripts/download_artifacts.py
+    uv run python scripts/download_artifacts.py --tag v0.3.1
+    uv run python scripts/download_artifacts.py --repo owner/freshguard-vision
 
-The detector and classifier asset names match the v2 names produced by
-notebooks/kaggle_03_*_v2 and kaggle_04_*_v2.
+The detector and classifier asset names match the current release names
+produced by notebooks/kaggle_03_*_v2 and kaggle_04_*_v2.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 DEFAULT_REPO = "Abdulrahman-Elsmmany/freshguard-vision"
 DEFAULT_TAG = "latest"
 ASSETS = (
-    "yolo26n_produce_v2.pt",
+    "yolo26n_produce_v2_1.pt",
     "dinov3_vits16_food_freshness_v2.pt",
 )
 ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts"

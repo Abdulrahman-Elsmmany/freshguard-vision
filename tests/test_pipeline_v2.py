@@ -16,9 +16,16 @@ from freshness.inference.classifier import (
 )
 from freshness.inference.detector import Detection
 from freshness.inference.pipeline import FreshnessPipeline, PipelineUnavailableError
+from freshness.utils.images import open_image
 
 
-def _prediction(label: str, confidence: float = 0.9, abstain_reason: str | None = None) -> ClassifierPrediction:
+def _prediction(
+    label: str,
+    confidence: float = 0.9,
+    abstain_reason: str | None = None,
+    probabilities: dict[str, float] | None = None,
+    top2_margin: float = 0.5,
+) -> ClassifierPrediction:
     if label == COMBINED_UNKNOWN:
         produce_type = UNKNOWN_TYPE
         freshness = FRESHNESS_NA
@@ -29,9 +36,9 @@ def _prediction(label: str, confidence: float = 0.9, abstain_reason: str | None 
         produce_type=produce_type if abstain_reason is None else UNKNOWN_TYPE,
         freshness=freshness if abstain_reason is None else FRESHNESS_NA,
         confidence=confidence,
-        probabilities={label: confidence},
+        probabilities=probabilities or {label: confidence},
         entropy=0.2,
-        top2_margin=0.5,
+        top2_margin=top2_margin,
         abstain_reason=abstain_reason,
     )
 
@@ -78,7 +85,7 @@ class PipelineV2Tests(unittest.TestCase):
         return FreshnessPipeline(
             detector=FakeDetector(detections),  # type: ignore[arg-type]
             classifier=FakeClassifier(predictions),  # type: ignore[arg-type]
-            max_detections=8,
+            max_detections=12,
             fallback_threshold=0.4,
         )
 
@@ -118,14 +125,74 @@ class PipelineV2Tests(unittest.TestCase):
         self.assertEqual(result[0].combined_label, COMBINED_UNKNOWN)
         self.assertEqual(result[0].abstain_reason, "low_top1")
 
-    def test_no_detections_uses_full_image_classifier(self) -> None:
-        pipeline = self._pipeline([], [_prediction("tomato_rotten", confidence=0.77)])
+    def test_no_detections_abstains_without_closed_set_guess(self) -> None:
+        pipeline = self._pipeline([], [])
 
         result = pipeline.predict(self.image)
 
         self.assertEqual(result[0].box, (0.0, 0.0, 100.0, 100.0))
-        self.assertEqual(result[0].combined_label, "tomato_rotten")
+        self.assertEqual(result[0].combined_label, COMBINED_UNKNOWN)
+        self.assertEqual(result[0].source, "unknown")
+        self.assertEqual(result[0].abstain_reason, "no_produce_detected")
+
+    def test_scene_level_box_is_suppressed_when_item_box_exists(self) -> None:
+        full_frame = Detection(confidence=0.9, box=(0.0, 0.0, 100.0, 100.0))
+        item_box = Detection(confidence=0.4, box=self.box)
+        pipeline = self._pipeline(
+            [full_frame, item_box],
+            [_prediction("apple_fresh"), _prediction("apple_fresh", confidence=0.86)],
+        )
+
+        result = pipeline.predict(self.image)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].box, self.box)
+        self.assertEqual(result[0].combined_label, "apple_fresh")
+
+    def test_large_weak_single_box_rejects_as_non_produce(self) -> None:
+        pipeline = self._pipeline(
+            [Detection(confidence=0.89, box=(0.0, 0.0, 100.0, 100.0))],
+            [
+                _prediction("cucumber_fresh", confidence=0.48),
+                _prediction("cucumber_fresh", confidence=0.44),
+            ],
+        )
+
+        result = pipeline.predict(self.image)
+
+        self.assertEqual(result[0].combined_label, COMBINED_UNKNOWN)
+        self.assertEqual(result[0].source, "unknown")
+        self.assertEqual(result[0].abstain_reason, "non_produce_image")
+
+    def test_same_type_freshness_uncertainty_keeps_type(self) -> None:
+        probabilities = {
+            "apple_rotten": 0.47,
+            "apple_fresh": 0.44,
+            "bellpepper_rotten": 0.06,
+            "tomato_fresh": 0.03,
+        }
+        pipeline = self._pipeline(
+            [Detection(confidence=0.39, box=self.box)],
+            [
+                _prediction("apple_fresh", abstain_reason="low_top1"),
+                _prediction(
+                    "apple_rotten",
+                    confidence=0.47,
+                    abstain_reason="narrow_margin",
+                    probabilities=probabilities,
+                    top2_margin=0.03,
+                ),
+            ],
+        )
+
+        result = pipeline.predict(self.image)
+
+        self.assertEqual(result[0].combined_label, "apple_n_a")
+        self.assertEqual(result[0].produce_type, "apple")
+        self.assertEqual(result[0].freshness, FRESHNESS_NA)
         self.assertEqual(result[0].source, "classifier")
+        self.assertEqual(result[0].abstain_reason, "freshness_uncertain")
+        self.assertAlmostEqual(result[0].confidence, 0.91)
 
     def test_progress_callback_reports_pipeline_order(self) -> None:
         pipeline = self._pipeline(
@@ -174,9 +241,9 @@ class PipelineV2Tests(unittest.TestCase):
                     [
                         "[runtime]",
                         'default_mode = "torch"',
-                        "detector_confidence = 0.40",
+                        "detector_confidence = 0.20",
                         "detector_iou = 0.45",
-                        "max_detections = 8",
+                        "max_detections = 12",
                         "classifier_image_size = 256",
                         "fallback_threshold = 0.4",
                         "",
@@ -195,6 +262,65 @@ class PipelineV2Tests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             _validate_class_names({"class_names": ("apple_fresh",)})
+
+    def test_transparent_uploads_are_composited_before_inference(self) -> None:
+        transparent = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+
+        image = open_image(transparent)
+
+        self.assertEqual(image.mode, "RGB")
+        self.assertEqual(image.getpixel((0, 0)), (255, 255, 255))
+
+
+class LocalImageRegressionTests(unittest.TestCase):
+    repo_root = Path(__file__).resolve().parents[1]
+    detector_artifact = repo_root / "artifacts" / "yolo26n_produce_v2_1.pt"
+    classifier_artifact = repo_root / "artifacts" / "dinov3_vits16_food_freshness_v2.pt"
+    car_image = Path(r"C:\Users\abdoe\Desktop\test_img\DSC_5903.webp")
+    grouped_apple_image = Path(r"C:\Users\abdoe\Desktop\test_img\fresh apple.jpg")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not (
+            cls.detector_artifact.exists()
+            and cls.classifier_artifact.exists()
+            and cls.car_image.exists()
+            and cls.grouped_apple_image.exists()
+        ):
+            raise unittest.SkipTest("Local model artifacts or reported images are unavailable.")
+        cls.pipeline = FreshnessPipeline.from_config()
+
+    def test_reported_car_image_rejects_as_unknown(self) -> None:
+        image = Image.open(self.car_image).convert("RGB")
+
+        result = self.pipeline.predict(image)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].combined_label, COMBINED_UNKNOWN)
+        self.assertEqual(result[0].produce_type, UNKNOWN_TYPE)
+        self.assertEqual(result[0].freshness, FRESHNESS_NA)
+        self.assertEqual(result[0].source, "unknown")
+        self.assertIn(
+            result[0].abstain_reason,
+            {"no_produce_detected", "non_produce_image"},
+        )
+
+    def test_reported_grouped_apples_suppress_full_frame_box(self) -> None:
+        image = Image.open(self.grouped_apple_image).convert("RGB")
+
+        result = self.pipeline.predict(image)
+
+        areas = [
+            (item.box[2] - item.box[0]) * (item.box[3] - item.box[1])
+            / (image.width * image.height)
+            for item in result
+        ]
+        self.assertGreaterEqual(len(result), 4)
+        self.assertTrue(all(area < 0.85 for area in areas))
+        self.assertGreaterEqual(
+            sum(item.produce_type == "apple" for item in result),
+            4,
+        )
 
 
 if __name__ == "__main__":

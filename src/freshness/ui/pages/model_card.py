@@ -82,6 +82,10 @@ def _detector_table() -> str:
         f"<td class='num'>{m['detector_map50']:.4f}</td></tr>"
         f"<tr><td>Detector mAP@50–95</td>"
         f"<td class='num'>{m['detector_map5095']:.4f}</td></tr>"
+        f"<tr><td>Open Images negative false accept rate</td>"
+        f"<td class='num'>{m['open_world_false_accept']:.4f}</td></tr>"
+        f"<tr><td>Open Images positive retention</td>"
+        f"<td class='num'>{m['open_world_positive_retention']:.4f}</td></tr>"
         "</tbody></table>"
     )
 

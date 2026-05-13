@@ -41,7 +41,7 @@ class V2NotebookTests(unittest.TestCase):
             for path in NOTEBOOKS.glob("*_v2.ipynb")
         )
 
-        self.assertIn("yolo26n_produce_v2.pt", combined)
+        self.assertIn("yolo26n_produce_v2_1.pt", combined)
         self.assertIn("dinov3_vits16_food_freshness_v2.pt", combined)
         self.assertIn("vit_small_patch16_dinov3", combined)
 

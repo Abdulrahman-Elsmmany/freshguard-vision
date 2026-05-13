@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from html import escape
-from io import BytesIO
 
 import streamlit as st
 from PIL import Image
@@ -18,6 +17,7 @@ from freshness.utils.images import (
     INK_UNKNOWN,
     ImageTooLargeError,
     draw_boxes,
+    open_image,
 )
 from freshness.utils.labels import display_freshness_name, display_type_name
 
@@ -48,11 +48,31 @@ ABSTAIN_REASON_COPY: dict[str, tuple[str, str]] = {
         "The top two classes were within a few percent of each other. The "
         "system declined to commit when both options were plausible.",
     ),
+    "freshness_uncertain": (
+        "FRESHNESS UNCERTAIN",
+        "The crop looked like a supported produce type, but the fresh and "
+        "rotten probabilities were too close to publish a freshness label.",
+    ),
     "crop_full_image_disagree": (
         "CROP ↔ FULL-IMAGE DISAGREEMENT",
         "The crop classifier and full-image sanity check committed to "
         "different produce types. The system treated that as an "
         "out-of-distribution signal.",
+    ),
+    "no_produce_detected": (
+        "NO PRODUCE DETECTED",
+        "YOLO26n did not find a usable produce box, so the closed-set "
+        "freshness classifier was skipped instead of guessing.",
+    ),
+    "non_produce_image": (
+        "NON-PRODUCE IMAGE",
+        "The only localization evidence was a weak near-full-frame box. "
+        "The system rejected it as unsupported input.",
+    ),
+    "scene_box_suppressed": (
+        "SCENE-LEVEL BOX SUPPRESSED",
+        "A near-full-image detector box was treated as scene context rather "
+        "than an individual produce item.",
     ),
     "no_classifier": (
         "NO FALLBACK AVAILABLE",
@@ -87,6 +107,12 @@ def _ink_for(detection: DetectedProduce) -> str:
     return STATE_INK.get(detection.freshness, INK_UNKNOWN)
 
 
+def _overlay_label(detection: DetectedProduce) -> str:
+    if detection.freshness == "n_a":
+        return f"{display_type_name(detection.produce_type).upper()} · N/A"
+    return detection.combined_label.upper().replace("_", " · ")
+
+
 def _render_specimen_card(detection: DetectedProduce, index: int) -> None:
     """Render one detection as a botanical specimen label."""
     state_cls = _state_class(detection.freshness, detection.source)
@@ -100,12 +126,19 @@ def _render_specimen_card(detection: DetectedProduce, index: int) -> None:
     latin = PRODUCE_LATIN.get(detection.produce_type, "Specimen incognitus")
     display_type = display_type_name(detection.produce_type)
     display_state = display_freshness_name(detection.freshness)
-    confidence_str = (
-        f"{detection.confidence:.4f}"
-        if detection.source != "unknown"
-        else "—"
-    )
+    confidence_str = f"{detection.confidence:.4f}" if detection.confidence > 0 else "—"
     source_label = SOURCE_LABEL.get(detection.source, detection.source.upper())
+    reason_html = ""
+    if detection.abstain_reason is not None:
+        reason_heading = ABSTAIN_REASON_COPY.get(
+            detection.abstain_reason,
+            ("ABSTAINED", ""),
+        )[0]
+        reason_html = (
+            '<div class="fg-card__note">'
+            f"{escape(reason_heading)}"
+            "</div>"
+        )
 
     state_label_html = (
         f'<span class="fg-card__attr-value fg-card__attr-value--state-{state_cls}">'
@@ -134,6 +167,7 @@ def _render_specimen_card(detection: DetectedProduce, index: int) -> None:
             <div class="fg-card__attr-label">CLASS</div>
             <div class="fg-card__attr-value fg-card__attr-value--mono">{detection.combined_label}</div>
           </div>
+          {reason_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -146,7 +180,7 @@ def _render_pipeline_unavailable(error: str | None) -> None:
         <div class="fg-warning">
           <strong>MODELS NOT READY</strong>
           {error or "Local artifacts are missing."}
-          Run <code>python scripts/download_artifacts.py</code> to pull the
+          Run <code>uv run python scripts/download_artifacts.py</code> to pull the
           checkpoints from the GitHub Release, or train them on Kaggle
           (see <code>notebooks/</code>).
         </div>
@@ -202,7 +236,7 @@ def _render_processing(
 
 def render_page() -> None:
     render_hero(
-        eyebrow="FRESHGUARD VISION · 2026 EDITION · v0.3.0",
+        eyebrow="FRESHGUARD VISION · 2026 EDITION · v0.3.1",
         title="An almanac of <em>freshness</em>.",
         latin_cycle=[PRODUCE_LATIN[p] for p in PRODUCE_TYPES],
         kicker="",
@@ -224,8 +258,8 @@ def render_page() -> None:
         '<div class="fg-deposit">'
         '<div class="fg-deposit__caption">JPG · JPEG · PNG · WEBP &nbsp; / &nbsp; max 4096 px</div>'
         '<div class="fg-deposit__guide">'
-        'Upload one produce image. YOLO26n finds the produce area, then '
-        'DINOv3-S/16 assigns the freshness label.'
+            'Upload a produce image. YOLO26n finds item-level produce boxes, '
+            'then DINOv3-S/16 assigns freshness where the evidence is strong.'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -246,7 +280,7 @@ def render_page() -> None:
     processing_slot = st.empty()
 
     try:
-        image = Image.open(BytesIO(uploaded.getvalue())).convert("RGB")
+        image = open_image(uploaded.getvalue())
         _render_upload_receipt(uploaded.name, image)
         _render_processing(
             processing_slot,
@@ -270,7 +304,7 @@ def render_page() -> None:
         return
 
     boxes = [d.box for d in detections]
-    labels = [d.combined_label.upper().replace("_", " · ") for d in detections]
+    labels = [_overlay_label(d) for d in detections]
     colors = [_ink_for(d) for d in detections]
     specimen_numbers = [f"No {i + 1:03d}" for i in range(len(detections))]
     latin_names = [PRODUCE_LATIN.get(d.produce_type, "") for d in detections]
@@ -287,20 +321,21 @@ def render_page() -> None:
     left, right = st.columns([1.4, 1.0], gap="large")
     with left:
         render_section("II.", "SPECIMEN", "Examined plate")
-        is_unknown = bool(detections) and detections[0].source == "unknown"
+        is_unknown = bool(detections) and all(d.source == "unknown" for d in detections)
         n = len(detections) if not is_unknown else 0
         plural = "S" if n != 1 else ""
+        threshold = getattr(pipeline.detector, "confidence", 0.0)
         caption = (
             "NO CONFIDENT PREDICTION"
             if is_unknown
-            else f"{n} OBSERVATION{plural}  ·  CONF ≥ 0.40"
+            else f"{n} OBSERVATION{plural}  ·  DET CONF ≥ {threshold:.2f}"
         )
         st.image(overlay, caption=caption, width="stretch")
 
     with right:
         render_section("III.", "FIELD NOTES", "Per-detection record")
 
-        if not detections or detections[0].source == "unknown":
+        if not detections or all(d.source == "unknown" for d in detections):
             reason = detections[0].abstain_reason if detections else None
             heading, body = ABSTAIN_REASON_COPY.get(
                 reason or "",

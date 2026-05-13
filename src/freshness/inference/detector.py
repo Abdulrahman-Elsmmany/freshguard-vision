@@ -29,9 +29,9 @@ class YOLO26Detector:
     def __init__(
         self,
         model_path: str | Path,
-        confidence: float = 0.40,
+        confidence: float = 0.20,
         iou: float = 0.45,
-        max_detections: int = 8,
+        max_detections: int = 12,
     ) -> None:
         self.model_path = Path(model_path)
         self.confidence = confidence

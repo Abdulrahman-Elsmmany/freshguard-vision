@@ -2,7 +2,7 @@
 
 # FreshGuard Vision
 
-> v2 rebuild complete: **YOLO26n produce localization** plus a **DINOv3-S/16 24-class freshness classifier**. Local Streamlit demo, honest cluster-disjoint metrics, and an external KTH GroceryStoreDataset type benchmark.
+> v2.1 shipped: **YOLO26n produce localization** plus a **DINOv3-S/16 24-class freshness classifier** with open-world rejection. Local Streamlit app, honest cluster-disjoint metrics, Open Images negative evaluation, and an external KTH GroceryStoreDataset type benchmark.
 
 [Demo](#demo) · [Quickstart](#quickstart) · [Eval report](./eval_report.md) · [Training notebooks](./notebooks/) · [PRD](./PRD.md)
 
@@ -17,7 +17,7 @@
 
 ## Demo
 
-End-to-end run through the **Specimen Lab** page: image upload → YOLO26n produce localization → DINOv3-S/16 24-class freshness label per box → confidence + source badges. The final clip exercises the abstain stack on an out-of-distribution image.
+End-to-end run through the **Specimen Lab** page: image upload → YOLO26n produce localization → scene-box filtering → DINOv3-S/16 freshness labels where evidence is strong → confidence + source badges. Unsupported uploads abstain instead of being forced into the nearest produce class.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Abdulrahman-Elsmmany/Abdulrahman-Elsmmany/main/assets/demos/freshguard-demo.gif" alt="FreshGuard Specimen Lab — end-to-end inference demo" width="100%">
@@ -35,10 +35,12 @@ End-to-end run through the **Specimen Lab** page: image upload → YOLO26n produ
 | Classifier top-1 accuracy               |   0.9490   |
 | **KTH external type accuracy**          | **0.8995** |
 | KTH external sample count               |      955   |
-| Detector mAP@50                         |   0.8763   |
-| Detector mAP@50–95                      |   0.8249   |
+| Detector mAP@50                         |   0.8693   |
+| Detector mAP@50–95                      |   0.8190   |
+| Open Images negative false accept       |   0.0873   |
+| Open Images positive retention          |   0.5951   |
 
-Macro F1 is the headline because top-1 accuracy hides minority-class failure under the **41 : 1** class imbalance baked into the source dataset. The KTH row is type-only external evidence; KTH has no fresh/rotten labels, so it is not mixed into the canonical 24-class freshness metric. Numbers come from `eval_report.json`, produced by [`notebooks/kaggle_05_evaluate_v2.ipynb`](notebooks/kaggle_05_evaluate_v2.ipynb).
+Macro F1 is the headline because top-1 accuracy hides minority-class failure under the **41 : 1** class imbalance baked into the source dataset. The KTH row is type-only external evidence; KTH has no fresh/rotten labels, so it is not mixed into the canonical 24-class freshness metric. The Open Images rows measure open-world detector behavior on existing validated web-style data. Numbers come from `eval_report.json`, produced by [`notebooks/kaggle_05_evaluate_v2.ipynb`](notebooks/kaggle_05_evaluate_v2.ipynb).
 
 ## Architecture
 
@@ -52,21 +54,23 @@ flowchart LR
     YOLO["YOLO26n · produce-only<br/>boxes · confidence"]
     CROP["DINOv3-S/16<br/>crop classifier · 24-class"]
     FULL["DINOv3-S/16<br/>full-image sanity check"]
+    POST["Open-world filters<br/>drop scene boxes · reject weak full-frame boxes"]
     DET["✅ Detections<br/>(label · freshness · box · conf)"]
-    CLS["✅ Single guess<br/>(label · freshness · conf)"]
+    PARTIAL["Apple / n_a<br/>type known · freshness uncertain"]
     UNK["🔶 unknown / n_a"]
 
     UP --> YOLO
-    YOLO -->|"≥ 1 box"| CROP
+    YOLO -->|"candidate boxes"| POST
+    POST -->|"item-level boxes"| CROP
+    POST -->|"no usable produce evidence"| UNK
     UP --> FULL
     CROP -->|"crop/full-image agree or full abstains"| DET
-    CROP -->|"crop abstains or type disagreement"| UNK
-    YOLO -->|"no boxes"| FULL
-    FULL -->|"top-1 conf ≥ 0.40"| CLS
-    FULL -->|"abstain stack trips"| UNK
+    CROP -->|"same type · freshness split"| PARTIAL
+    CROP -->|"type disagreement or weak evidence"| UNK
+    YOLO -->|"no boxes"| UNK
 ```
 
-The 24-class label space is `{12 produce types} × {fresh, rotten}`. In v2 the detector has no type or freshness opinion; DINOv3 is the single authority for labels, applied to each crop, with the full image used as an out-of-distribution sanity check.
+The 24-class label space is `{12 produce types} × {fresh, rotten}`. In v2 the detector has no type or freshness opinion; DINOv3 is the single authority for labels, applied to each crop, with the full image used as an out-of-distribution sanity check. Runtime filters now reject no-box uploads and weak near-full-frame detections instead of asking the closed-set classifier to guess.
 
 ---
 
@@ -88,7 +92,7 @@ The checkpoints are release assets, not git files. The app expects:
 
 | File | Purpose | Size |
 |---|---|---:|
-| `yolo26n_produce_v2.pt` | one-class produce detector | ~15 MB |
+| `yolo26n_produce_v2_1.pt` | one-class produce detector with Open Images negative hardening | ~5 MB |
 | `dinov3_vits16_food_freshness_v2.pt` | DINOv3-S/16 24-class classifier | ~83 MB |
 
 The download script fetches both into `artifacts/`:
@@ -135,12 +139,12 @@ Every step runs on Kaggle. The six v2 notebooks under `notebooks/` chain their o
 
 | # | Notebook | Kaggle inputs | Accelerator | Save output as |
 |---|---|---|---|---|
-| 0 | `kaggle_00_fetch_official_sources_v2.ipynb` | none; Internet on | none | `freshguard-official-sources-v2` |
+| 0 | `kaggle_00_fetch_official_sources_v2.ipynb` | none; Internet on | none | `freshguard-official-sources-v2-1` |
 | 1 | `kaggle_01_dataset_audit_v2.ipynb` | `ulnnproject/food-freshness-dataset`, `freshguard-official-sources-v2` | none | `freshguard-v2-splits` |
-| 2 | `kaggle_02_prepare_detector_data_v2.ipynb` | `ulnnproject/food-freshness-dataset`, `freshguard-v2-splits`, `freshguard-official-sources-v2` | none | `freshguard-v2-detector-data` |
-| 3 | `kaggle_03_train_detector_v2.ipynb` | `freshguard-v2-detector-data` | T4 x2 | `freshguard-v2-detector-artifacts` |
+| 2 | `kaggle_02_prepare_detector_data_v2.ipynb` | `ulnnproject/food-freshness-dataset`, `freshguard-v2-splits`, `freshguard-official-sources-v2-1` | none | `freshguard-v2-1-detector-data` |
+| 3 | `kaggle_03_train_detector_v2.ipynb` | `freshguard-v2-1-detector-data` | T4 x2 | `freshguard-v2-1-detector-artifacts` |
 | 4 | `kaggle_04_train_classifier_dinov3_v2.ipynb` | `freshguard-v2-splits`, `ulnnproject/food-freshness-dataset`, `freshguard-official-sources-v2` | T4 x2 | `freshguard-v2-classifier-artifacts` |
-| 5 | `kaggle_05_evaluate_v2.ipynb` | splits, detector data, detector artifact, classifier artifact, official sources, Food Freshness, optional five-apple dataset | P100 or T4 | `freshguard-v2-eval` |
+| 5 | `kaggle_05_evaluate_v2.ipynb` | splits, detector data, detector artifact, classifier artifact, official sources, Food Freshness, optional five-apple dataset | P100 or T4 | `freshguard-v2-1-eval` |
 
 The v1 notebooks remain in the directory as the shipped v0.2.0 evidence trail.
 
@@ -173,7 +177,7 @@ freshguard-vision/
 
 The `.pt` checkpoints are large and don't belong in git. v1 outputs are archived locally under `deprecated/` and remain out of version control. The v2 runtime expects:
 
-- `yolo26n_produce_v2.pt` — produce-only detector
+- `yolo26n_produce_v2_1.pt` — produce-only detector with Open Images negative hardening
 - `dinov3_vits16_food_freshness_v2.pt` — DINOv3-S/16 classifier
 
 `scripts/download_artifacts.py` resolves the latest release via the GitHub API and drops both files into `artifacts/` automatically.
@@ -184,8 +188,10 @@ The `.pt` checkpoints are large and don't belong in git. v1 outputs are archived
 
 - **The weakest v2 classifier classes are still imperfect**: `carrot_rotten` (F1 0.855), `orange_rotten` (0.865), and `bellpepper_fresh` (0.866).
 - **KTH is type-only external evidence.** It has official grocery image splits but no fresh/rotten labels, so it cannot validate the 24-class freshness contract by itself.
-- **Detector supervision is mixed**: Food Freshness and KTH contribute full-image bootstrap boxes, while Open Images contributes official object boxes. Absolute box-quality numbers should be read with that training mix in mind.
-- **Out-of-distribution images** (cluttered scenes, novel varieties, non-produce subjects) trigger the classifier abstain stack, crop/full-image disagreement guard, or `unknown` — the system would rather refuse than confidently hallucinate.
+- **Detector supervision is mixed**: Food Freshness and KTH contribute full-image bootstrap boxes, while Open Images contributes official object boxes plus v2.1 negative/background examples with empty YOLO labels. Runtime scene-box suppression reduces the visible impact, but more instance-level boxes remain the next detector-quality lever.
+- **Open Images positive retention is the next detector target**: v2.1 measures a low negative false-accept rate (0.0873), but retains 0.5951 of Open Images positive images at the current runtime threshold.
+- **Out-of-distribution images** (cluttered scenes, novel varieties, non-produce subjects) trigger the detector/open-world gates, classifier abstain stack, crop/full-image disagreement guard, or `unknown` — the system would rather refuse than confidently hallucinate.
+- **Freshness can be uncertain even when type is clear.** Same-produce fresh/rotten ties are surfaced as `<produce> / n_a` instead of pretending the binary freshness decision is settled.
 - **Binary freshness only.** No shelf-life forecast, no "medium" / partial-ripeness label.
 
 ---
@@ -196,7 +202,7 @@ The `.pt` checkpoints are large and don't belong in git. v1 outputs are archived
 
 ## Status
 
-Local Streamlit demo · v2 model release target `v0.3.0` · single-author project · MIT licensed.
+Local Streamlit demo · v2.1 release `v0.3.1` · single-author project · MIT licensed.
 
 ## Contact
 
