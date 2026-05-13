@@ -217,7 +217,7 @@ def _progress_html(progress: PipelineProgress) -> str:
           <div class="fg-processing__label">ANALYSIS IN PROGRESS</div>
           <div class="fg-processing__phase">{phase}</div>
         </div>
-        <div class="fg-processing__pct">{pct:03d}%</div>
+        <div class="fg-processing__pct">{pct}%</div>
       </div>
       <div class="fg-processing__message">{escape(progress.message)}</div>
       <div class="fg-processing__track">
